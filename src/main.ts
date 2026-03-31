@@ -1,6 +1,6 @@
 import * as ex from 'excalibur';
 import { Resources, loader } from './resources';
-import { Player } from './player';
+import { AgentManager } from './agent-manager';
 
 const game = new ex.Engine({
     width: 800,
@@ -12,4 +12,10 @@ const game = new ex.Engine({
 
 game.start(loader).then(() => {
     Resources.TiledMap.addToScene(game.currentScene);
+
+    const agentManager = new AgentManager(game.currentScene);
+    agentManager.spawnAgents([
+        { id: 'A1', pos: ex.vec(37, 27) },
+        { id: 'A2', pos: ex.vec(69, 27) }
+    ]);
 });

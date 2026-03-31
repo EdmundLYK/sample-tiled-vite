@@ -69,6 +69,8 @@ Prove behavior system works WITHOUT backend
 
 * Agents respond to fake logs
 
+(maybe can let agents to move/do specific instruction/ command)
+
 ---
 
 ## 5. Phase 3 — Action Mapping System
