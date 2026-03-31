@@ -1,5 +1,6 @@
 import * as ex from 'excalibur';
 import { Agent } from './agent';
+import { AgentLog } from './agent-log';
 
 export interface SpawnAgentOptions {
   id: string;
@@ -9,6 +10,7 @@ export interface SpawnAgentOptions {
 
 export class AgentManager {
   private readonly agents = new Map<string, Agent>();
+  private readonly logsByAgent = new Map<string, AgentLog>();
 
   constructor(private readonly scene: ex.Scene) {}
 
@@ -34,5 +36,27 @@ export class AgentManager {
 
   getAllAgents(): Agent[] {
     return Array.from(this.agents.values());
+  }
+
+  updateLogs(agentId: string, log: AgentLog): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Cannot update logs for unknown agent "${agentId}"`);
+    }
+
+    this.logsByAgent.set(agentId, log);
+    agent.applyLog(log);
+    console.log(`[AgentManager] ${agentId} -> ${log.action_type}`, log);
+  }
+
+  getLastLog(agentId: string): AgentLog | undefined {
+    return this.logsByAgent.get(agentId);
+  }
+
+  getDebugSnapshot(): Array<{ id: string; mode: 'command' | 'autonomous'; actionType: string; remainingMs: number }> {
+    return this.getAllAgents().map((agent) => ({
+      id: agent.id,
+      ...agent.getDebugStatus()
+    }));
   }
 }

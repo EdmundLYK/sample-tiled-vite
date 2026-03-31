@@ -1,8 +1,9 @@
 import * as ex from 'excalibur';
 import { Config } from './config';
 import { Resources } from './resources';
+import { AgentCommandDirection, AgentLog } from './agent-log';
 
-type Facing = 'left' | 'right' | 'up' | 'down';
+type Facing = AgentCommandDirection;
 type AnimationState =
   | 'left-idle'
   | 'right-idle'
@@ -27,6 +28,10 @@ export class Agent extends ex.Actor {
   private facing: Facing = 'down';
   private currentVelocity = ex.vec(0, 0);
   private currentAnimation: AnimationState = 'down-idle';
+  private currentLog: AgentLog | null = null;
+  private commandTimerMs = 0;
+  private commandVelocity = ex.vec(0, 0);
+  private commandAnimation: AnimationState = 'down-idle';
 
   constructor({ id, pos }: AgentOptions) {
     super({
@@ -65,6 +70,23 @@ export class Agent extends ex.Actor {
   }
 
   onPreUpdate(_engine: ex.Engine, elapsedMs: number): void {
+    if (this.commandTimerMs > 0) {
+      this.commandTimerMs -= elapsedMs;
+      this.vel = this.commandVelocity;
+      this.graphics.use(this.commandAnimation);
+
+      if (this.commandTimerMs <= 0) {
+        this.commandTimerMs = 0;
+        this.pickNextBehavior();
+      }
+
+      ex.Debug.drawRay(new ex.Ray(this.pos, this.vel), {
+        distance: 24,
+        color: ex.Color.Red
+      });
+      return;
+    }
+
     this.behaviorTimerMs -= elapsedMs;
 
     if (this.behaviorTimerMs <= 0) {
@@ -78,6 +100,54 @@ export class Agent extends ex.Actor {
       distance: 24,
       color: ex.Color.Red
     });
+  }
+
+  applyLog(log: AgentLog): void {
+    this.currentLog = log;
+    const durationMs = log.durationMs ?? 1800;
+
+    switch (log.action_type) {
+      case 'CREATE_SO':
+      case 'CREATE_PO':
+      case 'IDLE':
+        this.commandVelocity = ex.vec(0, 0);
+        this.commandAnimation = `${this.facing}-idle`;
+        this.commandTimerMs = durationMs;
+        break;
+      case 'STOCK_TRANSFER': {
+        const direction = log.direction ?? FACINGS[Math.floor(Math.random() * FACINGS.length)];
+        this.facing = direction;
+        this.commandVelocity = directionToVelocity(direction);
+        this.commandAnimation = `${direction}-walk`;
+        this.commandTimerMs = durationMs;
+        break;
+      }
+      default:
+        this.commandVelocity = ex.vec(0, 0);
+        this.commandAnimation = `${this.facing}-idle`;
+        this.commandTimerMs = durationMs;
+        break;
+    }
+  }
+
+  getCurrentLog(): AgentLog | null {
+    return this.currentLog;
+  }
+
+  getDebugStatus(): { mode: 'command' | 'autonomous'; actionType: string; remainingMs: number } {
+    if (this.commandTimerMs > 0) {
+      return {
+        mode: 'command',
+        actionType: this.currentLog?.action_type ?? 'UNKNOWN',
+        remainingMs: Math.max(0, Math.round(this.commandTimerMs))
+      };
+    }
+
+    return {
+      mode: 'autonomous',
+      actionType: 'RANDOM_BEHAVIOR',
+      remainingMs: Math.max(0, Math.round(this.behaviorTimerMs))
+    };
   }
 
   private addAnimation(key: AnimationState, spriteSheet: ex.SpriteSheet, row: number): void {
@@ -128,4 +198,18 @@ export class Agent extends ex.Actor {
 
 function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function directionToVelocity(direction: Facing): ex.Vector {
+  switch (direction) {
+    case 'left':
+      return ex.vec(-Config.AgentSpeed, 0);
+    case 'right':
+      return ex.vec(Config.AgentSpeed, 0);
+    case 'up':
+      return ex.vec(0, -Config.AgentSpeed);
+    case 'down':
+    default:
+      return ex.vec(0, Config.AgentSpeed);
+  }
 }
