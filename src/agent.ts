@@ -2,8 +2,11 @@ import * as ex from 'excalibur';
 import { Config } from './config';
 import { Resources } from './resources';
 import { AgentCommandDirection, AgentLog } from './agent-log';
+import { AgentBehaviorKind, getActionMapEntry } from './action-map';
+import { DepartmentBounds, DepartmentZone, normalizeZoneBounds, ZoneSeatSpot } from './department-zone';
 
 type Facing = AgentCommandDirection;
+type AutonomousBehavior = 'walk' | 'idle' | 'sit';
 type AnimationState =
   | 'left-idle'
   | 'right-idle'
@@ -29,9 +32,21 @@ export class Agent extends ex.Actor {
   private currentVelocity = ex.vec(0, 0);
   private currentAnimation: AnimationState = 'down-idle';
   private currentLog: AgentLog | null = null;
+  private currentMappedBehavior: AgentBehaviorKind = 'idle';
+  private currentAutonomousBehavior: AutonomousBehavior = 'idle';
   private commandTimerMs = 0;
   private commandVelocity = ex.vec(0, 0);
   private commandAnimation: AnimationState = 'down-idle';
+  private departmentZone: DepartmentZone | null = null;
+  private noWalkAreas: DepartmentBounds[] = [];
+  private obstacleAreas: DepartmentBounds[] = [];
+  private seatSpots: ZoneSeatSpot[] = [];
+  private commandTarget: ex.Vector | null = null;
+  private commandTargetFacing: Facing = 'up';
+  private commandPostMoveTimerMs = 0;
+  private reservedSeatKey: string | null = null;
+
+  private static readonly seatReservations = new Map<string, string>();
 
   constructor({ id, pos }: AgentOptions) {
     super({
@@ -43,6 +58,7 @@ export class Agent extends ex.Actor {
 
     this.id = id;
     this.name = id;
+    this.scale = ex.vec(Config.AgentScale, Config.AgentScale);
   }
 
   onInitialize(_engine: ex.Engine): void {
@@ -71,12 +87,20 @@ export class Agent extends ex.Actor {
 
   onPreUpdate(_engine: ex.Engine, elapsedMs: number): void {
     if (this.commandTimerMs > 0) {
-      this.commandTimerMs -= elapsedMs;
+      if (this.commandTarget) {
+        this.updateCommandMove(elapsedMs);
+      } else {
+        this.commandTimerMs -= elapsedMs;
+      }
+
       this.vel = this.commandVelocity;
       this.graphics.use(this.commandAnimation);
 
       if (this.commandTimerMs <= 0) {
         this.commandTimerMs = 0;
+        this.commandTarget = null;
+        this.commandPostMoveTimerMs = 0;
+        this.releaseSeatReservation();
         this.pickNextBehavior();
       }
 
@@ -93,6 +117,16 @@ export class Agent extends ex.Actor {
       this.pickNextBehavior();
     }
 
+    if (this.currentAutonomousBehavior === 'walk' && this.wouldEnterNoWalkArea(this.currentVelocity, elapsedMs)) {
+      this.pickNextBehavior();
+      if (this.currentAutonomousBehavior === 'walk' && this.wouldEnterNoWalkArea(this.currentVelocity, elapsedMs)) {
+        this.currentAutonomousBehavior = 'idle';
+        this.currentVelocity = ex.vec(0, 0);
+        this.currentAnimation = `${this.facing}-idle`;
+        this.behaviorTimerMs = randomBetween(500, 900);
+      }
+    }
+
     this.vel = this.currentVelocity;
     this.graphics.use(this.currentAnimation);
 
@@ -102,19 +136,38 @@ export class Agent extends ex.Actor {
     });
   }
 
+  onPostUpdate(_engine: ex.Engine, _elapsedMs: number): void {
+    this.constrainToDepartmentZone();
+    if (this.commandTimerMs <= 0) {
+      this.constrainOutsideNoWalkAreas();
+    }
+  }
+
   applyLog(log: AgentLog): void {
     this.currentLog = log;
-    const durationMs = log.durationMs ?? 1800;
+    const mapEntry = getActionMapEntry(log.action_type);
+    const durationMs = log.durationMs ?? mapEntry.defaultDurationMs;
+    this.currentMappedBehavior = mapEntry.behavior;
 
-    switch (log.action_type) {
-      case 'CREATE_SO':
-      case 'CREATE_PO':
-      case 'IDLE':
+    if (log.action_type === 'CREATE_SO' && this.seatSpots.length > 0) {
+      this.startCommandMoveToSeat(durationMs);
+      return;
+    }
+
+    this.releaseSeatReservation();
+
+    switch (mapEntry.behavior) {
+      case 'typing':
+      case 'idle':
+        this.commandTarget = null;
+        this.commandPostMoveTimerMs = 0;
         this.commandVelocity = ex.vec(0, 0);
         this.commandAnimation = `${this.facing}-idle`;
         this.commandTimerMs = durationMs;
         break;
-      case 'STOCK_TRANSFER': {
+      case 'walking': {
+        this.commandTarget = null;
+        this.commandPostMoveTimerMs = 0;
         const direction = log.direction ?? FACINGS[Math.floor(Math.random() * FACINGS.length)];
         this.facing = direction;
         this.commandVelocity = directionToVelocity(direction);
@@ -123,6 +176,8 @@ export class Agent extends ex.Actor {
         break;
       }
       default:
+        this.commandTarget = null;
+        this.commandPostMoveTimerMs = 0;
         this.commandVelocity = ex.vec(0, 0);
         this.commandAnimation = `${this.facing}-idle`;
         this.commandTimerMs = durationMs;
@@ -134,18 +189,49 @@ export class Agent extends ex.Actor {
     return this.currentLog;
   }
 
-  getDebugStatus(): { mode: 'command' | 'autonomous'; actionType: string; remainingMs: number } {
+  setDepartmentZone(zone: DepartmentZone): void {
+    this.releaseSeatReservation();
+
+    this.departmentZone = {
+      id: zone.id,
+      bounds: normalizeZoneBounds(zone.bounds),
+      noWalkAreas: zone.noWalkAreas?.map((area) => normalizeZoneBounds(area)),
+      obstacleAreas: zone.obstacleAreas?.map((area) => normalizeZoneBounds(area)),
+      seatSpots: zone.seatSpots?.map((seat) => ({ ...seat }))
+    };
+    this.noWalkAreas = this.departmentZone.noWalkAreas ?? [];
+    this.obstacleAreas = this.departmentZone.obstacleAreas ?? [];
+    this.seatSpots = this.departmentZone.seatSpots ?? [];
+    this.constrainToDepartmentZone();
+    this.constrainOutsideNoWalkAreas();
+  }
+
+  getDepartmentZoneId(): string | null {
+    return this.departmentZone?.id ?? null;
+  }
+
+  getDebugStatus(): {
+    state: 'active' | 'inactive';
+    mode: 'command' | 'autonomous';
+    actionType: string;
+    behavior: AgentBehaviorKind | AutonomousBehavior;
+    remainingMs: number;
+  } {
     if (this.commandTimerMs > 0) {
       return {
+        state: 'active',
         mode: 'command',
         actionType: this.currentLog?.action_type ?? 'UNKNOWN',
+        behavior: this.currentMappedBehavior,
         remainingMs: Math.max(0, Math.round(this.commandTimerMs))
       };
     }
 
     return {
+      state: 'inactive',
       mode: 'autonomous',
-      actionType: 'RANDOM_BEHAVIOR',
+      actionType: `AUTO_${this.currentAutonomousBehavior.toUpperCase()}`,
+      behavior: this.currentAutonomousBehavior,
       remainingMs: Math.max(0, Math.round(this.behaviorTimerMs))
     };
   }
@@ -163,36 +249,308 @@ export class Agent extends ex.Actor {
     this.graphics.add(key, animation);
   }
 
-  private pickNextBehavior(): void {
-    const shouldIdle = Math.random() < 0.2;
+  private startCommandMoveToSeat(durationMs: number): void {
+    const seatSelection = this.findNearestAvailableSeat();
+    if (!seatSelection) {
+      this.commandTarget = null;
+      this.commandPostMoveTimerMs = 0;
+      this.commandVelocity = ex.vec(0, 0);
+      this.commandAnimation = `${this.facing}-idle`;
+      this.commandTimerMs = durationMs;
+      return;
+    }
 
-    if (shouldIdle) {
+    this.reserveSeat(seatSelection.key);
+    const target = ex.vec(seatSelection.seat.x, seatSelection.seat.y);
+    const distance = target.sub(this.pos).size;
+    const walkMs = Math.max(280, Math.ceil((distance / Config.AgentSpeed) * 1000));
+
+    this.commandTarget = target;
+    this.commandTargetFacing = seatSelection.seat.facing;
+    this.commandPostMoveTimerMs = durationMs;
+    this.commandTimerMs = walkMs;
+    this.commandVelocity = ex.vec(0, 0);
+    this.commandAnimation = `${this.facing}-walk`;
+  }
+
+  private updateCommandMove(elapsedMs: number): void {
+    if (!this.commandTarget) {
+      return;
+    }
+
+    const toTarget = this.commandTarget.sub(this.pos);
+    const distance = toTarget.size;
+    const maxStep = Config.AgentSpeed * (elapsedMs / 1000);
+    this.commandTimerMs -= elapsedMs;
+
+    if (distance <= maxStep + 0.01 || this.commandTimerMs <= 0) {
+      this.pos = this.commandTarget.clone();
+      this.commandTarget = null;
+      this.facing = this.commandTargetFacing;
+      this.commandVelocity = ex.vec(0, 0);
+      this.commandAnimation = `${this.facing}-idle`;
+      this.commandTimerMs = this.commandPostMoveTimerMs;
+      this.commandPostMoveTimerMs = 0;
+      return;
+    }
+
+    const direction = toTarget.normalize();
+    const directVelocity = direction.scale(Config.AgentSpeed);
+
+    if (!this.wouldEnterAreas(directVelocity, elapsedMs, this.obstacleAreas)) {
+      this.commandVelocity = directVelocity;
+      this.commandAnimation = directionToWalkAnimation(direction);
+      return;
+    }
+
+    const candidateVelocities: ex.Vector[] = [];
+    if (Math.abs(direction.x) > 0.001) {
+      candidateVelocities.push(ex.vec(Math.sign(direction.x) * Config.AgentSpeed, 0));
+    }
+    if (Math.abs(direction.y) > 0.001) {
+      candidateVelocities.push(ex.vec(0, Math.sign(direction.y) * Config.AgentSpeed));
+    }
+
+    const perpendiculars = [
+      ex.vec(Config.AgentSpeed, 0),
+      ex.vec(-Config.AgentSpeed, 0),
+      ex.vec(0, Config.AgentSpeed),
+      ex.vec(0, -Config.AgentSpeed)
+    ];
+    for (const option of perpendiculars) {
+      candidateVelocities.push(option);
+    }
+
+    const step = elapsedMs / 1000;
+    let bestVelocity: ex.Vector | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const velocity of candidateVelocities) {
+      if (this.wouldEnterAreas(velocity, elapsedMs, this.obstacleAreas)) {
+        continue;
+      }
+
+      const projected = this.pos.add(velocity.scale(step));
+      const projectedDistance = projected.sub(this.commandTarget).size;
+      if (projectedDistance < bestDistance) {
+        bestDistance = projectedDistance;
+        bestVelocity = velocity;
+      }
+    }
+
+    if (!bestVelocity) {
+      this.commandVelocity = ex.vec(0, 0);
+      this.commandAnimation = `${this.facing}-idle`;
+      return;
+    }
+
+    this.commandVelocity = bestVelocity;
+    this.commandAnimation = directionToWalkAnimation(bestVelocity.normalize());
+  }
+
+  private findNearestAvailableSeat(): { seat: ZoneSeatSpot; key: string } | null {
+    if (!this.departmentZone || this.seatSpots.length === 0) {
+      return null;
+    }
+
+    const zoneId = this.departmentZone.id;
+    const candidates = this.seatSpots
+      .map((seat, index) => ({
+        seat,
+        key: `${zoneId}:${index}`,
+        distance: ex.vec(seat.x, seat.y).sub(this.pos).size
+      }))
+      .sort((a, b) => a.distance - b.distance);
+
+    for (const candidate of candidates) {
+      const holder = Agent.seatReservations.get(candidate.key);
+      if (!holder || holder === this.id) {
+        return { seat: candidate.seat, key: candidate.key };
+      }
+    }
+
+    const fallback = candidates[0];
+    return fallback ? { seat: fallback.seat, key: fallback.key } : null;
+  }
+
+  private reserveSeat(seatKey: string): void {
+    this.releaseSeatReservation();
+    Agent.seatReservations.set(seatKey, this.id);
+    this.reservedSeatKey = seatKey;
+  }
+
+  private releaseSeatReservation(): void {
+    if (!this.reservedSeatKey) {
+      return;
+    }
+
+    const holder = Agent.seatReservations.get(this.reservedSeatKey);
+    if (holder === this.id) {
+      Agent.seatReservations.delete(this.reservedSeatKey);
+    }
+    this.reservedSeatKey = null;
+  }
+
+  private pickNextBehavior(): void {
+    const nextBehavior = this.pickRandomAutonomousBehavior();
+
+    if (nextBehavior === 'idle') {
+      this.currentAutonomousBehavior = 'idle';
       this.currentVelocity = ex.vec(0, 0);
       this.currentAnimation = `${this.facing}-idle`;
       this.behaviorTimerMs = randomBetween(600, 1400);
       return;
     }
 
-    this.facing = FACINGS[Math.floor(Math.random() * FACINGS.length)];
-
-    switch (this.facing) {
-      case 'left':
-        this.currentVelocity = ex.vec(-Config.AgentSpeed, 0);
-        break;
-      case 'right':
-        this.currentVelocity = ex.vec(Config.AgentSpeed, 0);
-        break;
-      case 'up':
-        this.currentVelocity = ex.vec(0, -Config.AgentSpeed);
-        break;
-      case 'down':
-      default:
-        this.currentVelocity = ex.vec(0, Config.AgentSpeed);
-        break;
+    if (nextBehavior === 'sit') {
+      this.currentAutonomousBehavior = 'sit';
+      this.currentVelocity = ex.vec(0, 0);
+      this.facing = 'down';
+      this.currentAnimation = 'down-idle';
+      this.behaviorTimerMs = randomBetween(1400, 2600);
+      return;
     }
 
+    this.currentAutonomousBehavior = 'walk';
+    let selectedFacing: Facing | null = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const candidateFacing = FACINGS[Math.floor(Math.random() * FACINGS.length)];
+      const candidateVelocity = directionToVelocity(candidateFacing);
+      if (!this.wouldEnterNoWalkArea(candidateVelocity, 300)) {
+        selectedFacing = candidateFacing;
+        this.currentVelocity = candidateVelocity;
+        break;
+      }
+    }
+
+    if (!selectedFacing) {
+      this.currentAutonomousBehavior = 'idle';
+      this.currentVelocity = ex.vec(0, 0);
+      this.currentAnimation = `${this.facing}-idle`;
+      this.behaviorTimerMs = randomBetween(600, 1200);
+      return;
+    }
+
+    this.facing = selectedFacing;
     this.currentAnimation = `${this.facing}-walk`;
     this.behaviorTimerMs = randomBetween(700, 1800);
+  }
+
+  private pickRandomAutonomousBehavior(): AutonomousBehavior {
+    const roll = Math.random();
+    if (roll < 0.5) {
+      return 'walk';
+    }
+    if (roll < 0.8) {
+      return 'idle';
+    }
+    return 'sit';
+  }
+
+  private constrainToDepartmentZone(): void {
+    if (!this.departmentZone) {
+      return;
+    }
+
+    const bounds = this.departmentZone.bounds;
+    const halfWidth = (this.width * this.scale.x) / 2;
+    const halfHeight = (this.height * this.scale.y) / 2;
+    const minX = bounds.x1 + halfWidth;
+    const maxX = bounds.x2 - halfWidth;
+    const minY = bounds.y1 + halfHeight;
+    const maxY = bounds.y2 - halfHeight;
+
+    const clampedX = clamp(this.pos.x, minX, maxX);
+    const clampedY = clamp(this.pos.y, minY, maxY);
+    const hitX = clampedX !== this.pos.x;
+    const hitY = clampedY !== this.pos.y;
+
+    if (!hitX && !hitY) {
+      return;
+    }
+
+    this.pos = ex.vec(clampedX, clampedY);
+
+    if (hitX) {
+      this.currentVelocity = ex.vec(0, this.currentVelocity.y);
+      this.commandVelocity = ex.vec(0, this.commandVelocity.y);
+    }
+    if (hitY) {
+      this.currentVelocity = ex.vec(this.currentVelocity.x, 0);
+      this.commandVelocity = ex.vec(this.commandVelocity.x, 0);
+    }
+
+    if (this.commandTimerMs <= 0 && this.currentAutonomousBehavior === 'walk') {
+      this.pickNextBehavior();
+      return;
+    }
+
+    if (this.commandTimerMs > 0 && this.commandVelocity.equals(ex.Vector.Zero)) {
+      this.commandAnimation = `${this.facing}-idle`;
+    }
+  }
+
+  private constrainOutsideNoWalkAreas(): void {
+    if (this.noWalkAreas.length === 0) {
+      return;
+    }
+
+    const halfWidth = (this.width * this.scale.x) / 2;
+    const halfHeight = (this.height * this.scale.y) / 2;
+
+    for (const area of this.noWalkAreas) {
+      const minX = area.x1 + halfWidth;
+      const maxX = area.x2 - halfWidth;
+      const minY = area.y1 + halfHeight;
+      const maxY = area.y2 - halfHeight;
+      const inside = this.pos.x > minX && this.pos.x < maxX && this.pos.y > minY && this.pos.y < maxY;
+      if (!inside) {
+        continue;
+      }
+
+      const distanceLeft = Math.abs(this.pos.x - minX);
+      const distanceRight = Math.abs(maxX - this.pos.x);
+      const distanceTop = Math.abs(this.pos.y - minY);
+      const distanceBottom = Math.abs(maxY - this.pos.y);
+      const nearest = Math.min(distanceLeft, distanceRight, distanceTop, distanceBottom);
+
+      if (nearest === distanceLeft) {
+        this.pos = ex.vec(minX, this.pos.y);
+      } else if (nearest === distanceRight) {
+        this.pos = ex.vec(maxX, this.pos.y);
+      } else if (nearest === distanceTop) {
+        this.pos = ex.vec(this.pos.x, minY);
+      } else {
+        this.pos = ex.vec(this.pos.x, maxY);
+      }
+
+      this.currentVelocity = ex.vec(0, 0);
+      this.currentAnimation = `${this.facing}-idle`;
+      this.behaviorTimerMs = randomBetween(500, 900);
+      return;
+    }
+  }
+
+  private wouldEnterNoWalkArea(velocity: ex.Vector, elapsedMs: number): boolean {
+    return this.wouldEnterAreas(velocity, elapsedMs, this.noWalkAreas);
+  }
+
+  private wouldEnterAreas(velocity: ex.Vector, elapsedMs: number, areas: DepartmentBounds[]): boolean {
+    if (areas.length === 0 || velocity.equals(ex.Vector.Zero)) {
+      return false;
+    }
+
+    const step = elapsedMs / 1000;
+    const nextPos = this.pos.add(velocity.scale(step));
+    const halfWidth = (this.width * this.scale.x) / 2;
+    const halfHeight = (this.height * this.scale.y) / 2;
+    return areas.some((area) => {
+      const minX = area.x1 + halfWidth;
+      const maxX = area.x2 - halfWidth;
+      const minY = area.y1 + halfHeight;
+      const maxY = area.y2 - halfHeight;
+      return nextPos.x > minX && nextPos.x < maxX && nextPos.y > minY && nextPos.y < maxY;
+    });
   }
 }
 
@@ -212,4 +570,15 @@ function directionToVelocity(direction: Facing): ex.Vector {
     default:
       return ex.vec(0, Config.AgentSpeed);
   }
+}
+
+function directionToWalkAnimation(direction: ex.Vector): AnimationState {
+  if (Math.abs(direction.x) > Math.abs(direction.y)) {
+    return direction.x >= 0 ? 'right-walk' : 'left-walk';
+  }
+  return direction.y >= 0 ? 'down-walk' : 'up-walk';
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
