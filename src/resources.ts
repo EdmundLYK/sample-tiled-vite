@@ -3,7 +3,7 @@ import { TiledResource } from '@excaliburjs/plugin-tiled';
 
 // Import paths to work with Vite
 // Note the ?url suffix
-import heroPath from '../img/Solaria Demo Pack Update 03/Solaria Demo Pack Update 03/16x16/Sprites/Hero 01.png?url';
+import heroPath from '../img/custom/office/hero-office-guy-v3.png?url';
 import tilesetPath from '../img/Solaria Demo Pack Update 03/Solaria Demo Pack Update 03/16x16/Tilesets/Solaria Demo Update 01.png?url';
 import purchaseTilesetPath from '../img/custom/office/tiles-grey.png?url';
 import officeDeskWithPcPath from '../img/custom/office/desk-with-pc.png?url';

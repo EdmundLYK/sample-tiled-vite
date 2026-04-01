@@ -19,7 +19,6 @@ type AnimationState =
 
 const FACINGS: Facing[] = ['left', 'right', 'up', 'down'];
 const DEPARTMENT_WALL_CLEARANCE_PX = 6;
-const CHAIR_WALK_WINDOW_MS = 3000;
 
 export interface AgentOptions {
   id: string;
@@ -104,7 +103,6 @@ export class Agent extends ex.Actor {
         this.commandTimerMs = 0;
         this.commandTarget = null;
         this.commandPostMoveTimerMs = 0;
-        this.releaseSeatReservation();
         this.pickNextBehavior();
       }
 
@@ -264,11 +262,21 @@ export class Agent extends ex.Actor {
       return;
     }
 
-    this.reserveSeat(seatSelection.key);
+    if (!this.reserveSeat(seatSelection.key)) {
+      this.commandTarget = null;
+      this.commandPostMoveTimerMs = 0;
+      this.commandVelocity = ex.vec(0, 0);
+      this.commandAnimation = `${this.facing}-idle`;
+      this.commandTimerMs = durationMs;
+      return;
+    }
     const target = ex.vec(seatSelection.seat.x, seatSelection.seat.y);
     const distance = target.sub(this.pos).size;
     const estimatedWalkMs = Math.ceil((distance / Config.AgentSpeed) * 1000);
-    const walkMs = Math.max(280, Math.min(CHAIR_WALK_WINDOW_MS, estimatedWalkMs));
+    const walkMs = Math.max(
+      Config.ChairWalkMinMs,
+      Math.min(Config.ChairWalkWindowMs, estimatedWalkMs)
+    );
 
     this.commandTarget = target;
     this.commandTargetFacing = seatSelection.seat.facing;
@@ -386,14 +394,23 @@ export class Agent extends ex.Actor {
       }
     }
 
-    const fallback = candidates[0];
-    return fallback ? { seat: fallback.seat, key: fallback.key } : null;
+    return null;
   }
 
-  private reserveSeat(seatKey: string): void {
+  private reserveSeat(seatKey: string): boolean {
+    if (this.reservedSeatKey === seatKey) {
+      return true;
+    }
+
+    const holder = Agent.seatReservations.get(seatKey);
+    if (holder && holder !== this.id) {
+      return false;
+    }
+
     this.releaseSeatReservation();
     Agent.seatReservations.set(seatKey, this.id);
     this.reservedSeatKey = seatKey;
+    return true;
   }
 
   private releaseSeatReservation(): void {
@@ -428,6 +445,8 @@ export class Agent extends ex.Actor {
       return;
     }
 
+    // Release seat only when we actually start leaving it.
+    this.releaseSeatReservation();
     this.currentAutonomousBehavior = 'walk';
     let selectedFacing: Facing | null = null;
     for (let attempt = 0; attempt < 6; attempt++) {
