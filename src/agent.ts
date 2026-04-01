@@ -18,6 +18,8 @@ type AnimationState =
   | 'down-walk';
 
 const FACINGS: Facing[] = ['left', 'right', 'up', 'down'];
+const DEPARTMENT_WALL_CLEARANCE_PX = 6;
+const CHAIR_WALK_WINDOW_MS = 3000;
 
 export interface AgentOptions {
   id: string;
@@ -53,7 +55,9 @@ export class Agent extends ex.Actor {
       pos,
       width: 16,
       height: 16,
-      collisionType: ex.CollisionType.Active
+      // We drive movement and area constraints manually, so disable physics push-back
+      // between agents to prevent them shoving each other during path crossing.
+      collisionType: ex.CollisionType.PreventCollision
     });
 
     this.id = id;
@@ -263,7 +267,8 @@ export class Agent extends ex.Actor {
     this.reserveSeat(seatSelection.key);
     const target = ex.vec(seatSelection.seat.x, seatSelection.seat.y);
     const distance = target.sub(this.pos).size;
-    const walkMs = Math.max(280, Math.ceil((distance / Config.AgentSpeed) * 1000));
+    const estimatedWalkMs = Math.ceil((distance / Config.AgentSpeed) * 1000);
+    const walkMs = Math.max(280, Math.min(CHAIR_WALK_WINDOW_MS, estimatedWalkMs));
 
     this.commandTarget = target;
     this.commandTargetFacing = seatSelection.seat.facing;
@@ -283,7 +288,19 @@ export class Agent extends ex.Actor {
     const maxStep = Config.AgentSpeed * (elapsedMs / 1000);
     this.commandTimerMs -= elapsedMs;
 
-    if (distance <= maxStep + 0.01 || this.commandTimerMs <= 0) {
+    if (distance <= maxStep + 0.01) {
+      this.pos = this.commandTarget.clone();
+      this.commandTarget = null;
+      this.facing = this.commandTargetFacing;
+      this.commandVelocity = ex.vec(0, 0);
+      this.commandAnimation = `${this.facing}-idle`;
+      this.commandTimerMs = this.commandPostMoveTimerMs;
+      this.commandPostMoveTimerMs = 0;
+      return;
+    }
+
+    if (this.commandTimerMs <= 0) {
+      // Walk window expired: settle at the reserved seat so typing/sit state is still visible.
       this.pos = this.commandTarget.clone();
       this.commandTarget = null;
       this.facing = this.commandTargetFacing;
@@ -452,13 +469,12 @@ export class Agent extends ex.Actor {
       return;
     }
 
-    const bounds = this.departmentZone.bounds;
-    const halfWidth = (this.width * this.scale.x) / 2;
-    const halfHeight = (this.height * this.scale.y) / 2;
-    const minX = bounds.x1 + halfWidth;
-    const maxX = bounds.x2 - halfWidth;
-    const minY = bounds.y1 + halfHeight;
-    const maxY = bounds.y2 - halfHeight;
+    const movementBounds = this.getDepartmentMovementBounds();
+    if (!movementBounds) {
+      return;
+    }
+
+    const { minX, maxX, minY, maxY } = movementBounds;
 
     const clampedX = clamp(this.pos.x, minX, maxX);
     const clampedY = clamp(this.pos.y, minY, maxY);
@@ -536,12 +552,29 @@ export class Agent extends ex.Actor {
   }
 
   private wouldEnterAreas(velocity: ex.Vector, elapsedMs: number, areas: DepartmentBounds[]): boolean {
-    if (areas.length === 0 || velocity.equals(ex.Vector.Zero)) {
+    if (velocity.equals(ex.Vector.Zero)) {
       return false;
     }
 
     const step = elapsedMs / 1000;
     const nextPos = this.pos.add(velocity.scale(step));
+
+    const movementBounds = this.getDepartmentMovementBounds();
+    if (movementBounds) {
+      const outsideDepartment =
+        nextPos.x < movementBounds.minX ||
+        nextPos.x > movementBounds.maxX ||
+        nextPos.y < movementBounds.minY ||
+        nextPos.y > movementBounds.maxY;
+      if (outsideDepartment) {
+        return true;
+      }
+    }
+
+    if (areas.length === 0) {
+      return false;
+    }
+
     const halfWidth = (this.width * this.scale.x) / 2;
     const halfHeight = (this.height * this.scale.y) / 2;
     return areas.some((area) => {
@@ -551,6 +584,25 @@ export class Agent extends ex.Actor {
       const maxY = area.y2 - halfHeight;
       return nextPos.x > minX && nextPos.x < maxX && nextPos.y > minY && nextPos.y < maxY;
     });
+  }
+
+  private getDepartmentMovementBounds():
+    | { minX: number; maxX: number; minY: number; maxY: number }
+    | null {
+    if (!this.departmentZone) {
+      return null;
+    }
+
+    const bounds = this.departmentZone.bounds;
+    const halfWidth = (this.width * this.scale.x) / 2;
+    const halfHeight = (this.height * this.scale.y) / 2;
+
+    return {
+      minX: bounds.x1 + halfWidth + DEPARTMENT_WALL_CLEARANCE_PX,
+      maxX: bounds.x2 - halfWidth - DEPARTMENT_WALL_CLEARANCE_PX,
+      minY: bounds.y1 + halfHeight + DEPARTMENT_WALL_CLEARANCE_PX,
+      maxY: bounds.y2 - halfHeight - DEPARTMENT_WALL_CLEARANCE_PX
+    };
   }
 }
 

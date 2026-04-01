@@ -6,12 +6,12 @@ export const OperationsDepartment: DepartmentDefinition = {
   baseMapKey: 'base_operations',
   debugColor: 'rgba(164, 255, 138, 0.75)',
   debugFillColor: 'rgba(164, 255, 138, 0.12)',
-  bounds: { x1: 0, y1: 224, x2: 160, y2: 416 },
+  bounds: { x1: 592, y1: 0, x2: 800, y2: 240 },
   noWalkAreas: [
-    { x1: 36, y1: 280, x2: 126, y2: 374 }
+    { x1: 628, y1: 56, x2: 718, y2: 150 }
   ],
   obstacleAreas: [
-    { x1: 36, y1: 280, x2: 126, y2: 374 }
+    { x1: 628, y1: 56, x2: 718, y2: 150 }
   ],
-  defaultSpawn: { x: 80, y: 272 }
+  defaultSpawn: { x: 672, y: 48 }
 };

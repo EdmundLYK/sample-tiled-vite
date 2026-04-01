@@ -44,6 +44,18 @@ export class AgentManager {
     return Array.from(this.agents.values());
   }
 
+  removeAgent(id: string): boolean {
+    const agent = this.agents.get(id);
+    if (!agent) {
+      return false;
+    }
+
+    this.logsByAgent.delete(id);
+    this.agents.delete(id);
+    this.scene.remove(agent as unknown as ex.ScreenElement);
+    return true;
+  }
+
   updateLogs(agentId: string, log: AgentLog): void {
     const agent = this.agents.get(agentId);
     if (!agent) {

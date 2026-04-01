@@ -1,29 +1,37 @@
 import { DepartmentDefinition } from './types';
 
+const SALES_COLUMNS = 4;
+const SALES_ROWS = 6;
+const SALES_SEAT_START_X = 68;
+const SALES_SEAT_START_Y = 56;
+const SALES_SEAT_STEP_X = 42;
+const SALES_SEAT_STEP_Y = 34;
+const SALES_DESK_BLOCK = { x1: 56, y1: 38, x2: 218, y2: 234 };
+
+const SALES_SEAT_SPOTS: DepartmentDefinition['seatSpots'] = [];
+for (let row = 0; row < SALES_ROWS; row += 1) {
+  for (let col = 0; col < SALES_COLUMNS; col += 1) {
+    SALES_SEAT_SPOTS.push({
+      x: SALES_SEAT_START_X + col * SALES_SEAT_STEP_X,
+      y: SALES_SEAT_START_Y + row * SALES_SEAT_STEP_Y,
+      facing: 'up'
+    });
+  }
+}
+
 export const SalesDepartment: DepartmentDefinition = {
   id: 'sales',
   label: 'Sales',
   baseMapKey: 'base_sales',
   debugColor: 'rgba(120, 197, 255, 0.7)',
   debugFillColor: 'rgba(120, 197, 255, 0.12)',
-  bounds: { x1: 0, y1: 0, x2: 160, y2: 192 },
+  bounds: { x1: 48, y1: 0, x2: 256, y2: 240 },
   noWalkAreas: [
-    { x1: 8, y1: 48, x2: 92, y2: 156 }
+    SALES_DESK_BLOCK
   ],
   obstacleAreas: [
-    { x1: 14, y1: 52, x2: 82, y2: 66 },
-    { x1: 14, y1: 90, x2: 82, y2: 104 },
-    { x1: 14, y1: 128, x2: 82, y2: 142 },
-    { x1: 36, y1: 62, x2: 40, y2: 154 },
-    { x1: 78, y1: 62, x2: 82, y2: 154 }
+    SALES_DESK_BLOCK
   ],
-  seatSpots: [
-    { x: 20, y: 68, facing: 'up' },
-    { x: 62, y: 68, facing: 'up' },
-    { x: 20, y: 106, facing: 'up' },
-    { x: 62, y: 106, facing: 'up' },
-    { x: 20, y: 144, facing: 'up' },
-    { x: 62, y: 144, facing: 'up' }
-  ],
-  defaultSpawn: { x: 80, y: 40 }
+  seatSpots: SALES_SEAT_SPOTS,
+  defaultSpawn: { x: 128, y: 30 }
 };
