@@ -21,6 +21,7 @@ import officePartition1Path from '../img/custom/office/office-partitions-1.png?u
 import officePartition2Path from '../img/custom/office/office-partitions-2.png?url';
 import officeCoffeeMakerPath from '../img/custom/office/coffee-maker.png?url';
 import officeStampingTablePath from '../img/custom/office/stamping-table.png?url';
+import officeLorryPath from '../img/custom/office/lorry.png?url';
 import salesTmxPath from '../res/base-sales.tmx?url';
 import purchaseTmxPath from '../res/base-purchase.tmx?url';
 import operationsTmxPath from '../res/base-operations.tmx?url';
@@ -44,6 +45,7 @@ export const Resources = {
   OfficePartition2Png: new ImageSource(officePartition2Path, false, ImageFiltering.Pixel),
   OfficeCoffeeMakerPng: new ImageSource(officeCoffeeMakerPath, false, ImageFiltering.Pixel),
   OfficeStampingTablePng: new ImageSource(officeStampingTablePath, false, ImageFiltering.Pixel),
+  OfficeLorryPng: new ImageSource(officeLorryPath, false, ImageFiltering.Pixel),
   TsxResource: new Resource(tsxPath, 'text'),
   PurchaseTsxResource: new Resource(purchaseTsxPath, 'text')
 }

@@ -17,13 +17,15 @@ type OfficePropSpriteKey =
   | 'OfficeDeskWithPcPng'
   | 'OfficeChairPng'
   | 'OfficePartition1Png'
-  | 'OfficePartition2Png';
+  | 'OfficePartition2Png'
+  | 'OfficeLorryPng';
 
 interface OfficePropPlacement {
   spriteKey: OfficePropSpriteKey;
   x: number;
   y: number;
   z?: number;
+  scale?: number;
   flipX?: boolean;
   rotation?: number;
 }
@@ -61,6 +63,12 @@ const PURCHASE_START_X = 276;
 const PURCHASE_START_Y = 44;
 const PURCHASE_STEP_X = 42;
 const PURCHASE_STEP_Y = 34;
+const OPERATIONS_COLUMNS = 3;
+const OPERATIONS_ROWS = 5;
+const OPERATIONS_START_X = 512;
+const OPERATIONS_START_Y = 64;
+const OPERATIONS_STEP_X = 58;
+const OPERATIONS_STEP_Y = 34;
 
 function buildSalesDeskSlotAnchors(): Array<{ x: number; y: number }> {
   const anchors: Array<{ x: number; y: number }> = [];
@@ -90,22 +98,21 @@ function buildPurchaseDeskSlotAnchors(): Array<{ x: number; y: number }> {
   return anchors;
 }
 
-const OFFICE_LAYOUTS: Record<string, OfficePropPlacement[]> = {
-  operations: [
-    { spriteKey: 'OfficeDeskWithPcPng', x: 512, y: 64, z: 30 },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 576, y: 64, z: 30 },
-    { spriteKey: 'OfficeChairPng', x: 512, y: 82, z: 31 },
-    { spriteKey: 'OfficeChairPng', x: 576, y: 82, z: 31 },
-    { spriteKey: 'OfficePartition1Png', x: 512, y: 76, z: 29 },
-    { spriteKey: 'OfficePartition1Png', x: 576, y: 76, z: 29, flipX: true },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 512, y: 122, z: 30 },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 576, y: 122, z: 30 },
-    { spriteKey: 'OfficeChairPng', x: 512, y: 138, z: 31 },
-    { spriteKey: 'OfficeChairPng', x: 576, y: 138, z: 31 },
-    { spriteKey: 'OfficePartition1Png', x: 512, y: 132, z: 29 },
-    { spriteKey: 'OfficePartition1Png', x: 576, y: 132, z: 29, flipX: true }
-  ]
-};
+function buildOperationsLorrySlotAnchors(): Array<{ x: number; y: number }> {
+  const anchors: Array<{ x: number; y: number }> = [];
+  // Row-first sequence: fill one row left->right, then move down.
+  for (let row = 0; row < OPERATIONS_ROWS; row += 1) {
+    for (let col = 0; col < OPERATIONS_COLUMNS; col += 1) {
+      anchors.push({
+        x: OPERATIONS_START_X + col * OPERATIONS_STEP_X,
+        y: OPERATIONS_START_Y + row * OPERATIONS_STEP_Y
+      });
+    }
+  }
+  return anchors;
+}
+
+const OFFICE_LAYOUTS: Record<string, OfficePropPlacement[]> = {};
 
 function spawnDepartmentFloors(scene: ex.Scene): void {
   const floorColor = ex.Color.fromHex('#ffffff');
@@ -168,7 +175,7 @@ function spawnDepartmentWalls(scene: ex.Scene): void {
 
 function spawnOfficeProps(
   scene: ex.Scene
-): { salesDeskSets: OfficeDeskActorSet[]; purchaseDeskSets: OfficeDeskActorSet[] } {
+): { salesDeskSets: OfficeDeskActorSet[]; purchaseDeskSets: OfficeDeskActorSet[]; operationsLorryActors: ex.Actor[] } {
   const salesDeskSets: OfficeDeskActorSet[] = [];
   const salesAnchors = buildSalesDeskSlotAnchors();
   for (const anchor of salesAnchors) {
@@ -241,6 +248,21 @@ function spawnOfficeProps(
     purchaseDeskSets.push({ desk, chair, partition });
   }
 
+  const operationsLorryActors: ex.Actor[] = [];
+  const operationsLorryAnchors = buildOperationsLorrySlotAnchors();
+  for (const anchor of operationsLorryAnchors) {
+    const lorry = new ex.Actor({
+      pos: ex.vec(anchor.x, anchor.y),
+      collisionType: ex.CollisionType.PreventCollision
+    });
+    lorry.graphics.use(Resources.OfficeLorryPng.toSprite());
+    lorry.scale = ex.vec(0.38, 0.38);
+    lorry.z = 30;
+    lorry.graphics.visible = false;
+    scene.add(lorry);
+    operationsLorryActors.push(lorry);
+  }
+
   for (const department of DEPARTMENTS) {
     if (department.id === 'sales' || department.id === 'purchase') {
       continue;
@@ -253,9 +275,10 @@ function spawnOfficeProps(
         collisionType: ex.CollisionType.PreventCollision
       });
       actor.graphics.use(sprite);
+      const propScale = prop.scale ?? Config.OfficePropScale;
       actor.scale = ex.vec(
-        Config.OfficePropScale * (prop.flipX ? -1 : 1),
-        Config.OfficePropScale
+        propScale * (prop.flipX ? -1 : 1),
+        propScale
       );
       actor.rotation = prop.rotation ?? 0;
       actor.z = prop.z ?? 30;
@@ -263,7 +286,7 @@ function spawnOfficeProps(
     }
   }
 
-  return { salesDeskSets, purchaseDeskSets };
+  return { salesDeskSets, purchaseDeskSets, operationsLorryActors };
 }
 
 const game = new ex.Engine({
@@ -543,6 +566,7 @@ game.start(loader).then(() => {
   let customAgentCounter = 1;
   const salesDeskSets = officeProps.salesDeskSets;
   const purchaseDeskSets = officeProps.purchaseDeskSets;
+  const operationsLorryActors = officeProps.operationsLorryActors;
   const salesSeatSpotsByDesk = buildSalesDeskSlotAnchors().map((anchor) => ({
     x: anchor.x,
     y: anchor.y + 12,
@@ -555,6 +579,7 @@ game.start(loader).then(() => {
   }));
   let currentVisibleSalesDeskCount = -1;
   let currentVisiblePurchaseDeskCount = -1;
+  let currentVisibleOperationsLorryCount = -1;
   const actionCounterByType: Record<TrackedActionType, number> = {
     CREATE_SO: 0,
     CREATE_PO: 0,
@@ -695,6 +720,10 @@ game.start(loader).then(() => {
     set.partition.graphics.visible = visible;
   };
 
+  const setActorVisibility = (actor: ex.Actor, visible: boolean) => {
+    actor.graphics.visible = visible;
+  };
+
   const updateSalesDeskVisibility = (
     snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
   ) => {
@@ -753,11 +782,27 @@ game.start(loader).then(() => {
     }
   };
 
+  const updateOperationsLorryVisibility = (
+    snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
+  ) => {
+    const operationsAgentCount = snapshot.filter((entry) => entry.zoneId === 'operations').length;
+    const visibleLorryCount = Math.max(0, Math.min(operationsAgentCount, operationsLorryActors.length));
+    if (visibleLorryCount === currentVisibleOperationsLorryCount) {
+      return;
+    }
+
+    currentVisibleOperationsLorryCount = visibleLorryCount;
+    for (let i = 0; i < operationsLorryActors.length; i += 1) {
+      setActorVisibility(operationsLorryActors[i], i < visibleLorryCount);
+    }
+  };
+
   const updateDepartmentDeskVisibility = (
     snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
   ) => {
     updateSalesDeskVisibility(snapshot);
     updatePurchaseDeskVisibility(snapshot);
+    updateOperationsLorryVisibility(snapshot);
   };
   updateDepartmentDeskVisibility();
 
