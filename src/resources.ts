@@ -4,6 +4,7 @@ import { TiledResource } from '@excaliburjs/plugin-tiled';
 // Import paths to work with Vite
 // Note the ?url suffix
 import heroPath from '../img/custom/office/hero-office-guy-v3.png?url';
+import femaleHeroPath from '../img/custom/office female/hero-office-girl-v1.png?url';
 import tilesetPath from '../img/Solaria Demo Pack Update 03/Solaria Demo Pack Update 03/16x16/Tilesets/Solaria Demo Update 01.png?url';
 import purchaseTilesetPath from '../img/custom/office/tiles-grey.png?url';
 import officeDeskWithPcPath from '../img/custom/office/desk-with-pc.png?url';
@@ -28,6 +29,7 @@ import purchaseTsxPath from '../res/tileset-purchase.tsx?url';
 
 export const Resources = {
   HeroSpriteSheetPng: new ImageSource(heroPath, false, ImageFiltering.Pixel),
+  HeroFemaleSpriteSheetPng: new ImageSource(femaleHeroPath, false, ImageFiltering.Pixel),
   OfficeDeskWithPcPng: new ImageSource(officeDeskWithPcPath, false, ImageFiltering.Pixel),
   OfficeDeskPng: new ImageSource(officeDeskPath, false, ImageFiltering.Pixel),
   OfficeChairPng: new ImageSource(officeChairPath, false, ImageFiltering.Pixel),

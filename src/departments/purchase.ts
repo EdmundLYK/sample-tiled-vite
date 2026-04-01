@@ -6,7 +6,10 @@ const PURCHASE_SEAT_START_X = 276;
 const PURCHASE_SEAT_START_Y = 56;
 const PURCHASE_SEAT_STEP_X = 42;
 const PURCHASE_SEAT_STEP_Y = 34;
-const PURCHASE_DESK_BLOCK = { x1: 264, y1: 38, x2: 426, y2: 234 };
+const PURCHASE_DESK_START_X = PURCHASE_SEAT_START_X;
+const PURCHASE_DESK_START_Y = PURCHASE_SEAT_START_Y - 12;
+const PURCHASE_DESK_HALF_WIDTH = 12;
+const PURCHASE_DESK_HALF_HEIGHT = 8;
 
 const PURCHASE_SEAT_SPOTS: DepartmentDefinition['seatSpots'] = [];
 for (let row = 0; row < PURCHASE_ROWS; row += 1) {
@@ -19,6 +22,20 @@ for (let row = 0; row < PURCHASE_ROWS; row += 1) {
   }
 }
 
+const PURCHASE_DESK_OBSTACLES: DepartmentDefinition['obstacleAreas'] = [];
+for (let row = 0; row < PURCHASE_ROWS; row += 1) {
+  for (let col = 0; col < PURCHASE_COLUMNS; col += 1) {
+    const deskX = PURCHASE_DESK_START_X + col * PURCHASE_SEAT_STEP_X;
+    const deskY = PURCHASE_DESK_START_Y + row * PURCHASE_SEAT_STEP_Y;
+    PURCHASE_DESK_OBSTACLES.push({
+      x1: deskX - PURCHASE_DESK_HALF_WIDTH,
+      y1: deskY - PURCHASE_DESK_HALF_HEIGHT,
+      x2: deskX + PURCHASE_DESK_HALF_WIDTH,
+      y2: deskY + PURCHASE_DESK_HALF_HEIGHT
+    });
+  }
+}
+
 export const PurchaseDepartment: DepartmentDefinition = {
   id: 'purchase',
   label: 'Purchase',
@@ -26,12 +43,8 @@ export const PurchaseDepartment: DepartmentDefinition = {
   debugColor: 'rgba(255, 171, 118, 0.7)',
   debugFillColor: 'rgba(255, 171, 118, 0.12)',
   bounds: { x1: 256, y1: 0, x2: 464, y2: 240 },
-  noWalkAreas: [
-    PURCHASE_DESK_BLOCK
-  ],
-  obstacleAreas: [
-    PURCHASE_DESK_BLOCK
-  ],
+  noWalkAreas: PURCHASE_DESK_OBSTACLES,
+  obstacleAreas: PURCHASE_DESK_OBSTACLES,
   seatSpots: PURCHASE_SEAT_SPOTS,
   defaultSpawn: { x: 336, y: 40 }
 };

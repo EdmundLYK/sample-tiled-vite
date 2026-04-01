@@ -2,6 +2,7 @@ import * as ex from 'excalibur';
 import { Config } from './config';
 import { DepartmentBaseMapResources, loader, Resources } from './resources';
 import { AgentManager } from './agent-manager';
+import { AgentModel } from './agent';
 import { DEPARTMENTS, getDepartmentById } from './departments';
 import {
   addCustomCharacter,
@@ -30,6 +31,7 @@ interface OfficePropPlacement {
 interface RuntimeAgentMeta {
   displayName: string;
   customCharacterId: string | null;
+  model: AgentModel;
 }
 
 interface OfficeDeskActorSet {
@@ -509,29 +511,33 @@ game.start(loader).then(() => {
     {
       id: 'A1',
       pos: ex.vec(salesDepartment.defaultSpawn.x, salesDepartment.defaultSpawn.y),
-      departmentZone: salesDepartment
+      departmentZone: salesDepartment,
+      model: 'male'
     },
     {
       id: 'A2',
       pos: ex.vec(purchaseDepartment.defaultSpawn.x, purchaseDepartment.defaultSpawn.y),
-      departmentZone: purchaseDepartment
+      departmentZone: purchaseDepartment,
+      model: 'female'
     },
     {
       id: 'A3',
       pos: ex.vec(operationsDepartment.defaultSpawn.x, operationsDepartment.defaultSpawn.y),
-      departmentZone: operationsDepartment
+      departmentZone: operationsDepartment,
+      model: 'male'
     },
     {
       id: 'A4',
       pos: ex.vec(salesDepartment.defaultSpawn.x + 28, salesDepartment.defaultSpawn.y),
-      departmentZone: salesDepartment
+      departmentZone: salesDepartment,
+      model: 'male'
     }
   ]);
   const agentMetaById = new Map<string, RuntimeAgentMeta>([
-    ['A1', { displayName: 'A1', customCharacterId: null }],
-    ['A2', { displayName: 'A2', customCharacterId: null }],
-    ['A3', { displayName: 'A3', customCharacterId: null }],
-    ['A4', { displayName: 'A4', customCharacterId: null }]
+    ['A1', { displayName: 'A1', customCharacterId: null, model: 'male' }],
+    ['A2', { displayName: 'A2', customCharacterId: null, model: 'female' }],
+    ['A3', { displayName: 'A3', customCharacterId: null, model: 'male' }],
+    ['A4', { displayName: 'A4', customCharacterId: null, model: 'male' }]
   ]);
   const customCharacterRows = new Map<string, CustomCharacterRecord>();
   let customAgentCounter = 1;
@@ -922,7 +928,7 @@ game.start(loader).then(() => {
     return id;
   };
 
-  const spawnCustomCharacterFromRecord = (record: CustomCharacterRecord) => {
+  const spawnCustomCharacterFromRecord = (record: CustomCharacterRecord, model: AgentModel = 'male') => {
     const department = getDepartmentById(record.department_id);
     const runtimeId = getNextCustomAgentId();
     const pos = ex.vec(
@@ -932,10 +938,11 @@ game.start(loader).then(() => {
     const agent = agentManager.spawnAgent({
       id: runtimeId,
       pos,
-      departmentZone: department
+      departmentZone: department,
+      model
     });
     agents.push(agent);
-    agentMetaById.set(runtimeId, { displayName: record.display_name, customCharacterId: record.id });
+    agentMetaById.set(runtimeId, { displayName: record.display_name, customCharacterId: record.id, model });
     customCharacterRows.set(runtimeId, record);
     nextCommandAtByAgent.set(runtimeId, Date.now());
     wasActiveByAgent.set(runtimeId, false);
@@ -1103,6 +1110,25 @@ game.start(loader).then(() => {
   }
   departmentSelect.value = 'sales';
 
+  const modelSelect = document.createElement('select');
+  modelSelect.style.width = '100%';
+  modelSelect.style.boxSizing = 'border-box';
+  modelSelect.style.marginBottom = '6px';
+  modelSelect.style.padding = '4px 6px';
+  modelSelect.style.borderRadius = '4px';
+  modelSelect.style.border = '1px solid rgba(255,255,255,0.25)';
+  modelSelect.style.background = 'rgba(7, 23, 40, 0.95)';
+  modelSelect.style.color = '#eaf7ff';
+  const maleModelOption = document.createElement('option');
+  maleModelOption.value = 'male';
+  maleModelOption.textContent = 'Male model';
+  modelSelect.appendChild(maleModelOption);
+  const femaleModelOption = document.createElement('option');
+  femaleModelOption.value = 'female';
+  femaleModelOption.textContent = 'Female model';
+  modelSelect.appendChild(femaleModelOption);
+  modelSelect.value = 'female';
+
   const addButton = document.createElement('button');
   addButton.textContent = 'Add Character';
   addButton.style.width = '100%';
@@ -1202,9 +1228,10 @@ game.start(loader).then(() => {
   const refreshCustomList = () => {
     customListSelect.innerHTML = '';
     for (const [runtimeAgentId, record] of customCharacterRows.entries()) {
+      const model = agentMetaById.get(runtimeAgentId)?.model ?? 'male';
       const option = document.createElement('option');
       option.value = runtimeAgentId;
-      option.textContent = `${record.display_name} (${record.department_id})`;
+      option.textContent = `${record.display_name} (${record.department_id}, ${model})`;
       customListSelect.appendChild(option);
     }
 
@@ -1228,8 +1255,9 @@ game.start(loader).then(() => {
 
     try {
       const departmentId = departmentSelect.value as CharacterDepartmentId;
+      const model = modelSelect.value as AgentModel;
       const record = await addCustomCharacter(displayName, departmentId);
-      spawnCustomCharacterFromRecord(record);
+      spawnCustomCharacterFromRecord(record, model);
       refreshCustomList();
       nameInput.value = '';
       menuStatus.textContent = `Added "${record.display_name}"`;
@@ -1276,6 +1304,7 @@ game.start(loader).then(() => {
   characterMenu.appendChild(menuTitle);
   characterMenu.appendChild(nameInput);
   characterMenu.appendChild(departmentSelect);
+  characterMenu.appendChild(modelSelect);
   characterMenu.appendChild(addButton);
   characterMenu.appendChild(customListSelect);
   characterMenu.appendChild(deleteButton);

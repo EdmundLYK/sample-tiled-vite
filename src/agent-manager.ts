@@ -1,5 +1,5 @@
 import * as ex from 'excalibur';
-import { Agent } from './agent';
+import { Agent, AgentModel } from './agent';
 import { AgentLog } from './agent-log';
 import { AgentBehaviorKind } from './action-map';
 import { DepartmentZone } from './department-zone';
@@ -9,6 +9,7 @@ export interface SpawnAgentOptions {
   pos: ex.Vector;
   z?: number;
   departmentZone?: DepartmentZone;
+  model?: AgentModel;
 }
 
 export class AgentManager {
@@ -17,12 +18,12 @@ export class AgentManager {
 
   constructor(private readonly scene: ex.Scene) {}
 
-  spawnAgent({ id, pos, z = 100, departmentZone }: SpawnAgentOptions): Agent {
+  spawnAgent({ id, pos, z = 100, departmentZone, model }: SpawnAgentOptions): Agent {
     if (this.agents.has(id)) {
       throw new Error(`Agent with id "${id}" already exists`);
     }
 
-    const agent = new Agent({ id, pos: pos.clone() });
+    const agent = new Agent({ id, pos: pos.clone(), model });
     agent.z = z;
     if (departmentZone) {
       agent.setDepartmentZone(departmentZone);

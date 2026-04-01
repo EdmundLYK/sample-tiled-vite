@@ -7,6 +7,7 @@ import { DepartmentBounds, DepartmentZone, normalizeZoneBounds, ZoneSeatSpot } f
 
 type Facing = AgentCommandDirection;
 type AutonomousBehavior = 'walk' | 'idle' | 'sit';
+export type AgentModel = 'male' | 'female';
 type AnimationState =
   | 'left-idle'
   | 'right-idle'
@@ -23,6 +24,7 @@ const DEPARTMENT_WALL_CLEARANCE_PX = 6;
 export interface AgentOptions {
   id: string;
   pos: ex.Vector;
+  model?: AgentModel;
 }
 
 export class Agent extends ex.Actor {
@@ -43,13 +45,16 @@ export class Agent extends ex.Actor {
   private obstacleAreas: DepartmentBounds[] = [];
   private seatSpots: ZoneSeatSpot[] = [];
   private commandTarget: ex.Vector | null = null;
+  private commandWaypoints: ex.Vector[] = [];
   private commandTargetFacing: Facing = 'up';
   private commandPostMoveTimerMs = 0;
+  private commandWalkRetryCount = 0;
   private reservedSeatKey: string | null = null;
+  private readonly model: AgentModel;
 
   private static readonly seatReservations = new Map<string, string>();
 
-  constructor({ id, pos }: AgentOptions) {
+  constructor({ id, pos, model = 'male' }: AgentOptions) {
     super({
       pos,
       width: 16,
@@ -61,12 +66,16 @@ export class Agent extends ex.Actor {
 
     this.id = id;
     this.name = id;
+    this.model = model;
     this.scale = ex.vec(Config.AgentScale, Config.AgentScale);
   }
 
   onInitialize(_engine: ex.Engine): void {
+    const spriteImage = this.model === 'female'
+      ? (Resources.HeroFemaleSpriteSheetPng as ex.ImageSource)
+      : (Resources.HeroSpriteSheetPng as ex.ImageSource);
     const spriteSheet = ex.SpriteSheet.fromImageSource({
-      image: Resources.HeroSpriteSheetPng as ex.ImageSource,
+      image: spriteImage,
       grid: {
         spriteWidth: 16,
         spriteHeight: 16,
@@ -157,6 +166,7 @@ export class Agent extends ex.Actor {
     }
 
     this.releaseSeatReservation();
+    this.commandWalkRetryCount = 0;
 
     switch (mapEntry.behavior) {
       case 'typing':
@@ -258,7 +268,9 @@ export class Agent extends ex.Actor {
     const seatSelection = this.findNearestAvailableSeat();
     if (!seatSelection) {
       this.commandTarget = null;
+      this.commandWaypoints = [];
       this.commandPostMoveTimerMs = 0;
+      this.commandWalkRetryCount = 0;
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
       this.commandTimerMs = durationMs;
@@ -267,7 +279,9 @@ export class Agent extends ex.Actor {
 
     if (!this.reserveSeat(seatSelection.key)) {
       this.commandTarget = null;
+      this.commandWaypoints = [];
       this.commandPostMoveTimerMs = 0;
+      this.commandWalkRetryCount = 0;
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
       this.commandTimerMs = durationMs;
@@ -284,6 +298,8 @@ export class Agent extends ex.Actor {
     this.commandTarget = target;
     this.commandTargetFacing = seatSelection.seat.facing;
     this.commandPostMoveTimerMs = durationMs;
+    this.commandWalkRetryCount = 0;
+    this.commandWaypoints = seatSelection.path;
     this.commandTimerMs = walkMs;
     this.commandVelocity = ex.vec(0, 0);
     this.commandAnimation = `${this.facing}-walk`;
@@ -294,15 +310,27 @@ export class Agent extends ex.Actor {
       return;
     }
 
-    const toTarget = this.commandTarget.sub(this.pos);
-    const distance = toTarget.size;
     const maxStep = Config.AgentSpeed * (elapsedMs / 1000);
     this.commandTimerMs -= elapsedMs;
 
-    if (distance <= maxStep + 0.01) {
-      this.pos = this.commandTarget.clone();
+    // Consume waypoints until we either need to keep moving or reach the seat.
+    while (true) {
+      const activeWaypoint = this.commandWaypoints[0] ?? this.commandTarget;
+      const toWaypoint = activeWaypoint.sub(this.pos);
+      const waypointDistance = toWaypoint.size;
+      if (waypointDistance > maxStep + 0.01) {
+        break;
+      }
+
+      this.pos = activeWaypoint.clone();
+      if (this.commandWaypoints.length > 0) {
+        this.commandWaypoints.shift();
+        continue;
+      }
+
       this.commandTarget = null;
       this.facing = this.commandTargetFacing;
+      this.commandWalkRetryCount = 0;
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
       this.commandTimerMs = this.commandPostMoveTimerMs;
@@ -311,17 +339,34 @@ export class Agent extends ex.Actor {
     }
 
     if (this.commandTimerMs <= 0) {
-      // Walk window expired: settle at the reserved seat so typing/sit state is still visible.
-      this.pos = this.commandTarget.clone();
-      this.commandTarget = null;
-      this.facing = this.commandTargetFacing;
+      // Never stop mid-command at a desk: keep re-planning and occasionally re-pick seat.
+      const activeWaypoint = this.commandWaypoints[0] ?? this.commandTarget;
+      const remainingDistance = activeWaypoint.sub(this.pos).size;
+      const retryMs = Math.ceil((remainingDistance / Config.AgentSpeed) * 1000) + 1200;
+      this.commandWalkRetryCount += 1;
+
+      const replanned = this.planPathToTarget(this.commandTarget);
+      if (replanned && replanned.length > 0) {
+        this.commandWaypoints = replanned;
+      }
+
+      if (this.commandWalkRetryCount % 6 === 0) {
+        const alternateSeat = this.findNearestAvailableSeat();
+        if (alternateSeat && this.reserveSeat(alternateSeat.key)) {
+          this.commandTarget = ex.vec(alternateSeat.seat.x, alternateSeat.seat.y);
+          this.commandTargetFacing = alternateSeat.seat.facing;
+          this.commandWaypoints = alternateSeat.path;
+        }
+      }
+
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
-      this.commandTimerMs = this.commandPostMoveTimerMs;
-      this.commandPostMoveTimerMs = 0;
+      this.commandTimerMs = Math.max(900, retryMs);
       return;
     }
 
+    const activeWaypoint = this.commandWaypoints[0] ?? this.commandTarget;
+    const toTarget = activeWaypoint.sub(this.pos);
     const direction = toTarget.normalize();
     const directVelocity = direction.scale(Config.AgentSpeed);
 
@@ -331,52 +376,16 @@ export class Agent extends ex.Actor {
       return;
     }
 
-    const candidateVelocities: ex.Vector[] = [];
-    if (Math.abs(direction.x) > 0.001) {
-      candidateVelocities.push(ex.vec(Math.sign(direction.x) * Config.AgentSpeed, 0));
-    }
-    if (Math.abs(direction.y) > 0.001) {
-      candidateVelocities.push(ex.vec(0, Math.sign(direction.y) * Config.AgentSpeed));
-    }
-
-    const perpendiculars = [
-      ex.vec(Config.AgentSpeed, 0),
-      ex.vec(-Config.AgentSpeed, 0),
-      ex.vec(0, Config.AgentSpeed),
-      ex.vec(0, -Config.AgentSpeed)
-    ];
-    for (const option of perpendiculars) {
-      candidateVelocities.push(option);
-    }
-
-    const step = elapsedMs / 1000;
-    let bestVelocity: ex.Vector | null = null;
-    let bestDistance = Number.POSITIVE_INFINITY;
-
-    for (const velocity of candidateVelocities) {
-      if (this.wouldEnterAreas(velocity, elapsedMs, this.obstacleAreas)) {
-        continue;
-      }
-
-      const projected = this.pos.add(velocity.scale(step));
-      const projectedDistance = projected.sub(this.commandTarget).size;
-      if (projectedDistance < bestDistance) {
-        bestDistance = projectedDistance;
-        bestVelocity = velocity;
-      }
-    }
-
-    if (!bestVelocity) {
+    // If a straight move is blocked, re-plan path and wait for next frame.
+    this.commandWaypoints = this.planPathToTarget(this.commandTarget) ?? [];
+    if (this.commandWaypoints.length === 0) {
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
       return;
     }
-
-    this.commandVelocity = bestVelocity;
-    this.commandAnimation = directionToWalkAnimation(bestVelocity.normalize());
   }
 
-  private findNearestAvailableSeat(): { seat: ZoneSeatSpot; key: string } | null {
+  private findNearestAvailableSeat(): { seat: ZoneSeatSpot; key: string; path: ex.Vector[] } | null {
     if (!this.departmentZone || this.seatSpots.length === 0) {
       return null;
     }
@@ -390,14 +399,26 @@ export class Agent extends ex.Actor {
       }))
       .sort((a, b) => a.distance - b.distance);
 
+    let fallback: { seat: ZoneSeatSpot; key: string; path: ex.Vector[] } | null = null;
+
     for (const candidate of candidates) {
       const holder = Agent.seatReservations.get(candidate.key);
-      if (!holder || holder === this.id) {
-        return { seat: candidate.seat, key: candidate.key };
+      if (holder && holder !== this.id) {
+        continue;
+      }
+
+      const target = ex.vec(candidate.seat.x, candidate.seat.y);
+      const path = this.planPathToTarget(target);
+      if (path && path.length > 0) {
+        return { seat: candidate.seat, key: candidate.key, path };
+      }
+
+      if (!fallback) {
+        fallback = { seat: candidate.seat, key: candidate.key, path: [target] };
       }
     }
 
-    return null;
+    return fallback;
   }
 
   private reserveSeat(seatKey: string): boolean {
@@ -606,6 +627,122 @@ export class Agent extends ex.Actor {
       const maxY = area.y2 - halfHeight;
       return nextPos.x > minX && nextPos.x < maxX && nextPos.y > minY && nextPos.y < maxY;
     });
+  }
+
+  private planPathToTarget(target: ex.Vector): ex.Vector[] | null {
+    const movementBounds = this.getDepartmentMovementBounds();
+    if (!movementBounds) {
+      return [target.clone()];
+    }
+
+    const gridSize = 8;
+    const minX = movementBounds.minX;
+    const minY = movementBounds.minY;
+    const width = movementBounds.maxX - movementBounds.minX;
+    const height = movementBounds.maxY - movementBounds.minY;
+    const cols = Math.max(1, Math.floor(width / gridSize) + 1);
+    const rows = Math.max(1, Math.floor(height / gridSize) + 1);
+
+    const toCell = (pos: ex.Vector) => ({
+      cx: clamp(Math.round((pos.x - minX) / gridSize), 0, cols - 1),
+      cy: clamp(Math.round((pos.y - minY) / gridSize), 0, rows - 1)
+    });
+    const toWorld = (cx: number, cy: number) =>
+      ex.vec(minX + cx * gridSize, minY + cy * gridSize);
+    const toKey = (cx: number, cy: number) => `${cx},${cy}`;
+
+    const isBlocked = (cx: number, cy: number) => {
+      const center = toWorld(cx, cy);
+      const halfWidth = (this.width * this.scale.x) / 2;
+      const halfHeight = (this.height * this.scale.y) / 2;
+      return this.obstacleAreas.some((area) => {
+        const areaMinX = area.x1 + halfWidth;
+        const areaMaxX = area.x2 - halfWidth;
+        const areaMinY = area.y1 + halfHeight;
+        const areaMaxY = area.y2 - halfHeight;
+        return (
+          center.x > areaMinX &&
+          center.x < areaMaxX &&
+          center.y > areaMinY &&
+          center.y < areaMaxY
+        );
+      });
+    };
+
+    const start = toCell(this.pos);
+    const goal = toCell(target);
+    const startKey = toKey(start.cx, start.cy);
+    const goalKey = toKey(goal.cx, goal.cy);
+
+    const queue: Array<{ cx: number; cy: number }> = [{ cx: start.cx, cy: start.cy }];
+    const visited = new Set<string>([startKey]);
+    const parent = new Map<string, string>();
+
+    const deltas = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 }
+    ];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) {
+        break;
+      }
+
+      const currentKey = toKey(current.cx, current.cy);
+      if (currentKey === goalKey) {
+        break;
+      }
+
+      for (const delta of deltas) {
+        const nx = current.cx + delta.dx;
+        const ny = current.cy + delta.dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) {
+          continue;
+        }
+
+        const neighborKey = toKey(nx, ny);
+        if (visited.has(neighborKey)) {
+          continue;
+        }
+
+        const isStartCell = nx === start.cx && ny === start.cy;
+        const isGoalCell = nx === goal.cx && ny === goal.cy;
+        if (!isStartCell && !isGoalCell && isBlocked(nx, ny)) {
+          continue;
+        }
+
+        visited.add(neighborKey);
+        parent.set(neighborKey, currentKey);
+        queue.push({ cx: nx, cy: ny });
+      }
+    }
+
+    if (!visited.has(goalKey)) {
+      return null;
+    }
+
+    const pathCells: Array<{ cx: number; cy: number }> = [];
+    let cursorKey: string | undefined = goalKey;
+    while (cursorKey) {
+      const [cxText, cyText] = cursorKey.split(',');
+      pathCells.push({ cx: Number(cxText), cy: Number(cyText) });
+      if (cursorKey === startKey) {
+        break;
+      }
+      cursorKey = parent.get(cursorKey);
+    }
+    pathCells.reverse();
+
+    const waypoints: ex.Vector[] = [];
+    for (let i = 1; i < pathCells.length; i += 1) {
+      const cell = pathCells[i];
+      waypoints.push(toWorld(cell.cx, cell.cy));
+    }
+    waypoints.push(target.clone());
+    return waypoints;
   }
 
   private getDepartmentMovementBounds():
