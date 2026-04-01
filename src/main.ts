@@ -32,7 +32,7 @@ interface RuntimeAgentMeta {
   customCharacterId: string | null;
 }
 
-interface SalesDeskActorSet {
+interface OfficeDeskActorSet {
   desk: ex.Actor;
   chair: ex.Actor;
   partition: ex.Actor;
@@ -53,6 +53,12 @@ const SALES_START_Y = 44;
 const SALES_STEP_X = 42;
 const SALES_STEP_Y = 34;
 const SALES_PARTITION_RIGHT_OFFSET = 4;
+const PURCHASE_COLUMNS = 4;
+const PURCHASE_ROWS = 6;
+const PURCHASE_START_X = 276;
+const PURCHASE_START_Y = 44;
+const PURCHASE_STEP_X = 42;
+const PURCHASE_STEP_Y = 34;
 
 function buildSalesDeskSlotAnchors(): Array<{ x: number; y: number }> {
   const anchors: Array<{ x: number; y: number }> = [];
@@ -68,21 +74,21 @@ function buildSalesDeskSlotAnchors(): Array<{ x: number; y: number }> {
   return anchors;
 }
 
+function buildPurchaseDeskSlotAnchors(): Array<{ x: number; y: number }> {
+  const anchors: Array<{ x: number; y: number }> = [];
+  // Row-first sequence: fill one row left->right, then move down.
+  for (let row = 0; row < PURCHASE_ROWS; row += 1) {
+    for (let col = 0; col < PURCHASE_COLUMNS; col += 1) {
+      anchors.push({
+        x: PURCHASE_START_X + col * PURCHASE_STEP_X,
+        y: PURCHASE_START_Y + row * PURCHASE_STEP_Y
+      });
+    }
+  }
+  return anchors;
+}
+
 const OFFICE_LAYOUTS: Record<string, OfficePropPlacement[]> = {
-  purchase: [
-    { spriteKey: 'OfficeDeskWithPcPng', x: 304, y: 64, z: 30 },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 368, y: 64, z: 30 },
-    { spriteKey: 'OfficeChairPng', x: 304, y: 82, z: 31 },
-    { spriteKey: 'OfficeChairPng', x: 368, y: 82, z: 31 },
-    { spriteKey: 'OfficePartition1Png', x: 304, y: 76, z: 29 },
-    { spriteKey: 'OfficePartition1Png', x: 368, y: 76, z: 29, flipX: true },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 304, y: 122, z: 30 },
-    { spriteKey: 'OfficeDeskWithPcPng', x: 368, y: 122, z: 30 },
-    { spriteKey: 'OfficeChairPng', x: 304, y: 138, z: 31 },
-    { spriteKey: 'OfficeChairPng', x: 368, y: 138, z: 31 },
-    { spriteKey: 'OfficePartition1Png', x: 304, y: 132, z: 29 },
-    { spriteKey: 'OfficePartition1Png', x: 368, y: 132, z: 29, flipX: true }
-  ],
   operations: [
     { spriteKey: 'OfficeDeskWithPcPng', x: 512, y: 64, z: 30 },
     { spriteKey: 'OfficeDeskWithPcPng', x: 576, y: 64, z: 30 },
@@ -158,8 +164,10 @@ function spawnDepartmentWalls(scene: ex.Scene): void {
   }
 }
 
-function spawnOfficeProps(scene: ex.Scene): { salesDeskSets: SalesDeskActorSet[] } {
-  const salesDeskSets: SalesDeskActorSet[] = [];
+function spawnOfficeProps(
+  scene: ex.Scene
+): { salesDeskSets: OfficeDeskActorSet[]; purchaseDeskSets: OfficeDeskActorSet[] } {
+  const salesDeskSets: OfficeDeskActorSet[] = [];
   const salesAnchors = buildSalesDeskSlotAnchors();
   for (const anchor of salesAnchors) {
     const desk = new ex.Actor({
@@ -195,8 +203,44 @@ function spawnOfficeProps(scene: ex.Scene): { salesDeskSets: SalesDeskActorSet[]
     salesDeskSets.push({ desk, chair, partition });
   }
 
+  const purchaseDeskSets: OfficeDeskActorSet[] = [];
+  const purchaseAnchors = buildPurchaseDeskSlotAnchors();
+  for (const anchor of purchaseAnchors) {
+    const desk = new ex.Actor({
+      pos: ex.vec(anchor.x, anchor.y),
+      collisionType: ex.CollisionType.PreventCollision
+    });
+    desk.graphics.use(Resources.OfficeDeskWithPcPng.toSprite());
+    desk.scale = ex.vec(Config.OfficePropScale, Config.OfficePropScale);
+    desk.z = 30;
+    desk.graphics.visible = false;
+    scene.add(desk);
+
+    const chair = new ex.Actor({
+      pos: ex.vec(anchor.x, anchor.y + 12),
+      collisionType: ex.CollisionType.PreventCollision
+    });
+    chair.graphics.use(Resources.OfficeChairPng.toSprite());
+    chair.scale = ex.vec(Config.OfficePropScale, Config.OfficePropScale);
+    chair.z = 31;
+    chair.graphics.visible = false;
+    scene.add(chair);
+
+    const partition = new ex.Actor({
+      pos: ex.vec(anchor.x + SALES_PARTITION_RIGHT_OFFSET, anchor.y + 6),
+      collisionType: ex.CollisionType.PreventCollision
+    });
+    partition.graphics.use(Resources.OfficePartition1Png.toSprite());
+    partition.scale = ex.vec(-Config.OfficePropScale, Config.OfficePropScale);
+    partition.z = 29;
+    partition.graphics.visible = false;
+    scene.add(partition);
+
+    purchaseDeskSets.push({ desk, chair, partition });
+  }
+
   for (const department of DEPARTMENTS) {
-    if (department.id === 'sales') {
+    if (department.id === 'sales' || department.id === 'purchase') {
       continue;
     }
     const placements = OFFICE_LAYOUTS[department.id] ?? [];
@@ -217,7 +261,7 @@ function spawnOfficeProps(scene: ex.Scene): { salesDeskSets: SalesDeskActorSet[]
     }
   }
 
-  return { salesDeskSets };
+  return { salesDeskSets, purchaseDeskSets };
 }
 
 const game = new ex.Engine({
@@ -258,7 +302,6 @@ game.start(loader).then(() => {
     minY: Math.min(...DEPARTMENTS.map((d) => d.bounds.y1)),
     maxY: Math.max(...DEPARTMENTS.map((d) => d.bounds.y2))
   };
-  let closeDetailPanel: (() => void) | null = null;
   let debugHudPanelEl: HTMLDivElement | null = null;
   let debugHudLogEl: HTMLDivElement | null = null;
   let characterMenuEl: HTMLDivElement | null = null;
@@ -370,9 +413,6 @@ game.start(loader).then(() => {
       if (Math.abs(horizontalDelta) < 0.1) {
         horizontalDelta = event.deltaY;
       }
-      if (Math.abs(horizontalDelta) >= 0.1) {
-        closeDetailPanel?.();
-      }
       camera.pos = ex.vec(camera.pos.x + horizontalDelta * scrollScale, camera.pos.y);
       clampCameraToWorld();
       event.preventDefault();
@@ -393,8 +433,6 @@ game.start(loader).then(() => {
     if (dx === 0) {
       return;
     }
-
-    closeDetailPanel?.();
 
     const camera = game.currentScene.camera;
     const step = 5.5 / camera.zoom;
@@ -498,12 +536,19 @@ game.start(loader).then(() => {
   const customCharacterRows = new Map<string, CustomCharacterRecord>();
   let customAgentCounter = 1;
   const salesDeskSets = officeProps.salesDeskSets;
+  const purchaseDeskSets = officeProps.purchaseDeskSets;
   const salesSeatSpotsByDesk = buildSalesDeskSlotAnchors().map((anchor) => ({
     x: anchor.x,
     y: anchor.y + 12,
     facing: 'up' as const
   }));
+  const purchaseSeatSpotsByDesk = buildPurchaseDeskSlotAnchors().map((anchor) => ({
+    x: anchor.x,
+    y: anchor.y + 12,
+    facing: 'up' as const
+  }));
   let currentVisibleSalesDeskCount = -1;
+  let currentVisiblePurchaseDeskCount = -1;
   const actionCounterByType: Record<TrackedActionType, number> = {
     CREATE_SO: 0,
     CREATE_PO: 0,
@@ -638,14 +683,14 @@ game.start(loader).then(() => {
     refreshDepartmentSummaryUi();
   };
 
-  const setSalesDeskSetVisibility = (set: SalesDeskActorSet, visible: boolean) => {
+  const setDeskSetVisibility = (set: OfficeDeskActorSet, visible: boolean) => {
     set.desk.graphics.visible = visible;
     set.chair.graphics.visible = visible;
     set.partition.graphics.visible = visible;
   };
 
   const updateSalesDeskVisibility = (
-    snapshot: Array<{ zoneId: string | null }> = agentManager.getDebugSnapshot()
+    snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
   ) => {
     const salesAgentCount = snapshot.filter((entry) => entry.zoneId === 'sales').length;
     const visibleDeskCount = Math.max(0, Math.min(salesAgentCount, salesDeskSets.length));
@@ -655,7 +700,7 @@ game.start(loader).then(() => {
 
     currentVisibleSalesDeskCount = visibleDeskCount;
     for (let i = 0; i < salesDeskSets.length; i += 1) {
-      setSalesDeskSetVisibility(salesDeskSets[i], i < visibleDeskCount);
+      setDeskSetVisibility(salesDeskSets[i], i < visibleDeskCount);
     }
 
     // Keep Sales seat targets in sync with visible desks, using the same
@@ -667,13 +712,48 @@ game.start(loader).then(() => {
       obstacleAreas: salesDepartment.obstacleAreas,
       seatSpots: salesSeatSpotsByDesk.slice(0, visibleDeskCount)
     };
-    for (const entry of agentManager.getDebugSnapshot()) {
+    for (const entry of snapshot) {
       if (entry.zoneId === 'sales') {
         agentManager.assignAgentToZone(entry.id, salesRuntimeZone);
       }
     }
   };
-  updateSalesDeskVisibility();
+
+  const updatePurchaseDeskVisibility = (
+    snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
+  ) => {
+    const purchaseAgentCount = snapshot.filter((entry) => entry.zoneId === 'purchase').length;
+    const visibleDeskCount = Math.max(0, Math.min(purchaseAgentCount, purchaseDeskSets.length));
+    if (visibleDeskCount === currentVisiblePurchaseDeskCount) {
+      return;
+    }
+
+    currentVisiblePurchaseDeskCount = visibleDeskCount;
+    for (let i = 0; i < purchaseDeskSets.length; i += 1) {
+      setDeskSetVisibility(purchaseDeskSets[i], i < visibleDeskCount);
+    }
+
+    const purchaseRuntimeZone = {
+      id: purchaseDepartment.id,
+      bounds: purchaseDepartment.bounds,
+      noWalkAreas: purchaseDepartment.noWalkAreas,
+      obstacleAreas: purchaseDepartment.obstacleAreas,
+      seatSpots: purchaseSeatSpotsByDesk.slice(0, visibleDeskCount)
+    };
+    for (const entry of snapshot) {
+      if (entry.zoneId === 'purchase') {
+        agentManager.assignAgentToZone(entry.id, purchaseRuntimeZone);
+      }
+    }
+  };
+
+  const updateDepartmentDeskVisibility = (
+    snapshot: Array<{ id: string; zoneId: string | null }> = agentManager.getDebugSnapshot()
+  ) => {
+    updateSalesDeskVisibility(snapshot);
+    updatePurchaseDeskVisibility(snapshot);
+  };
+  updateDepartmentDeskVisibility();
 
   const COMMAND_COOLDOWN_MS = 7000;
   const nextCommandAtByAgent = new Map<string, number>();
@@ -748,7 +828,7 @@ game.start(loader).then(() => {
   hoverTooltip.style.right = 'auto';
   hoverTooltip.style.top = '12px';
   hoverTooltip.style.display = 'none';
-  hoverTooltip.style.padding = '10px 30px 8px 10px';
+  hoverTooltip.style.padding = '10px 10px 8px 10px';
   hoverTooltip.style.background = 'rgba(22, 18, 10, 0.85)';
   hoverTooltip.style.color = '#fff9e8';
   hoverTooltip.style.fontFamily = 'monospace';
@@ -759,27 +839,8 @@ game.start(loader).then(() => {
   hoverTooltip.style.borderRadius = '6px';
   hoverTooltip.style.pointerEvents = 'auto';
   hoverTooltip.style.zIndex = '9999';
-  const hoverTooltipCloseBtn = document.createElement('button');
-  hoverTooltipCloseBtn.type = 'button';
-  hoverTooltipCloseBtn.textContent = '×';
-  hoverTooltipCloseBtn.setAttribute('aria-label', 'Close agent details');
-  hoverTooltipCloseBtn.style.position = 'absolute';
-  hoverTooltipCloseBtn.style.top = '4px';
-  hoverTooltipCloseBtn.style.right = '6px';
-  hoverTooltipCloseBtn.style.width = '18px';
-  hoverTooltipCloseBtn.style.height = '18px';
-  hoverTooltipCloseBtn.style.padding = '0';
-  hoverTooltipCloseBtn.style.border = 'none';
-  hoverTooltipCloseBtn.style.borderRadius = '4px';
-  hoverTooltipCloseBtn.style.background = 'rgba(255, 255, 255, 0.14)';
-  hoverTooltipCloseBtn.style.color = '#fff9e8';
-  hoverTooltipCloseBtn.style.fontFamily = 'monospace';
-  hoverTooltipCloseBtn.style.fontSize = '14px';
-  hoverTooltipCloseBtn.style.lineHeight = '18px';
-  hoverTooltipCloseBtn.style.cursor = 'pointer';
   const hoverTooltipContent = document.createElement('div');
   hoverTooltipContent.style.whiteSpace = 'pre';
-  hoverTooltip.appendChild(hoverTooltipCloseBtn);
   hoverTooltip.appendChild(hoverTooltipContent);
   document.body.appendChild(hoverTooltip);
 
@@ -792,12 +853,6 @@ game.start(loader).then(() => {
     selectedDetailPanelPos = null;
     hoverTooltip.style.display = 'none';
   };
-  hoverTooltipCloseBtn.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    clearSelectedDetailPanel();
-  });
-  closeDetailPanel = clearSelectedDetailPanel;
   const agentNameTags = new Map<string, HTMLDivElement>();
   const departmentBoxes = new Map<string, HTMLDivElement>();
 
@@ -854,7 +909,7 @@ game.start(loader).then(() => {
     wasActiveByAgent.delete(agentId);
     agentMetaById.delete(agentId);
     customCharacterRows.delete(agentId);
-    updateSalesDeskVisibility();
+    updateDepartmentDeskVisibility();
     return true;
   };
 
@@ -885,7 +940,7 @@ game.start(loader).then(() => {
     nextCommandAtByAgent.set(runtimeId, Date.now());
     wasActiveByAgent.set(runtimeId, false);
     registerAgentTag(agent);
-    updateSalesDeskVisibility();
+    updateDepartmentDeskVisibility();
   };
 
   for (const agent of agents) {
@@ -924,57 +979,75 @@ game.start(loader).then(() => {
       selectedAgentId = clickedAgentId;
       selectedDetailAnchorAgentId = null;
       selectedDetailPanelPos = null;
-      return;
-    }
-    clearSelectedDetailPanel();
-  });
-
-  window.addEventListener('blur', () => {
-    clearSelectedDetailPanel();
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      clearSelectedDetailPanel();
     }
   });
 
   const debugHudPanel = document.createElement('div');
   debugHudPanelEl = debugHudPanel;
+  debugHudPanel.className = 'debug-hud-panel';
   debugHudPanel.style.position = 'fixed';
   debugHudPanel.style.left = '12px';
   debugHudPanel.style.top = '12px';
   debugHudPanel.style.width = 'min(240px, calc(100vw - 24px))';
-  debugHudPanel.style.background = 'rgba(0, 0, 0, 0.72)';
-  debugHudPanel.style.color = '#eaf7ff';
-  debugHudPanel.style.fontFamily = 'monospace';
+  debugHudPanel.style.background = 'linear-gradient(180deg, rgba(7, 24, 42, 0.94) 0%, rgba(5, 17, 31, 0.92) 100%)';
+  debugHudPanel.style.color = '#ecf8ff';
+  debugHudPanel.style.fontFamily = '\'JetBrains Mono\', \'IBM Plex Mono\', \'Cascadia Code\', monospace';
   debugHudPanel.style.fontSize = '12px';
   debugHudPanel.style.lineHeight = '1.35';
-  debugHudPanel.style.border = '1px solid rgba(255,255,255,0.25)';
-  debugHudPanel.style.borderRadius = '8px';
+  debugHudPanel.style.border = '1px solid rgba(122, 205, 255, 0.3)';
+  debugHudPanel.style.borderRadius = '12px';
+  debugHudPanel.style.boxShadow = '0 14px 28px rgba(0, 8, 20, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04) inset';
+  debugHudPanel.style.backdropFilter = 'blur(2px)';
   debugHudPanel.style.zIndex = '9999';
   debugHudPanel.style.overflow = 'hidden';
 
   const debugHudHeader = document.createElement('div');
+  debugHudHeader.className = 'debug-hud-header';
   debugHudHeader.textContent = 'Team Activity';
-  debugHudHeader.style.padding = '8px 10px 6px';
-  debugHudHeader.style.borderBottom = '1px solid rgba(255,255,255,0.14)';
+  debugHudHeader.style.padding = '9px 11px 7px';
+  debugHudHeader.style.borderBottom = '1px solid rgba(160, 224, 255, 0.22)';
+  debugHudHeader.style.background =
+    'linear-gradient(90deg, rgba(26, 90, 128, 0.35) 0%, rgba(13, 38, 60, 0.1) 100%)';
   debugHudHeader.style.fontWeight = '700';
-  debugHudHeader.style.letterSpacing = '0.2px';
+  debugHudHeader.style.letterSpacing = '0.35px';
+  debugHudHeader.style.textTransform = 'uppercase';
+  debugHudHeader.style.textShadow = '0 1px 0 rgba(0, 0, 0, 0.35)';
 
   const debugHudLog = document.createElement('div');
   debugHudLogEl = debugHudLog;
+  debugHudLog.className = 'debug-hud-log';
   debugHudLog.style.height = '420px';
   debugHudLog.style.maxHeight = '420px';
   debugHudLog.style.display = 'flex';
   debugHudLog.style.flexDirection = 'column';
   debugHudLog.style.justifyContent = 'flex-end';
+  debugHudLog.style.gap = '5px';
   debugHudLog.style.overflowY = 'auto';
   debugHudLog.style.overflowX = 'hidden';
-  debugHudLog.style.padding = '6px 10px 8px';
+  debugHudLog.style.padding = '8px 10px 9px';
   debugHudLog.style.whiteSpace = 'normal';
   debugHudLog.style.wordBreak = 'break-word';
   debugHudLog.style.scrollbarGutter = 'stable';
+  debugHudLog.style.background = 'linear-gradient(180deg, rgba(3, 12, 23, 0.45) 0%, rgba(2, 9, 18, 0.2) 100%)';
+  debugHudLog.style.scrollbarWidth = 'thin';
+  debugHudLog.style.scrollbarColor = 'rgba(132, 207, 255, 0.72) rgba(17, 47, 72, 0.55)';
+
+  const debugHudScrollStyles = document.createElement('style');
+  debugHudScrollStyles.textContent = `
+    .debug-hud-log::-webkit-scrollbar {
+      width: 9px;
+    }
+    .debug-hud-log::-webkit-scrollbar-track {
+      background: rgba(17, 47, 72, 0.55);
+      border-radius: 999px;
+    }
+    .debug-hud-log::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(139, 215, 255, 0.9) 0%, rgba(82, 167, 226, 0.92) 100%);
+      border-radius: 999px;
+      border: 2px solid rgba(17, 47, 72, 0.7);
+    }
+  `;
+  document.head.appendChild(debugHudScrollStyles);
 
   debugHudPanel.appendChild(debugHudHeader);
   debugHudPanel.appendChild(debugHudLog);
@@ -1241,11 +1314,23 @@ game.start(loader).then(() => {
   const appendHistoryRow = (text: string) => {
     const row = document.createElement('div');
     row.textContent = text;
+    const rowIndex = debugHudLog.childElementCount;
     row.style.whiteSpace = 'pre-wrap';
     row.style.wordBreak = 'break-word';
+    row.style.padding = '4px 6px';
+    row.style.borderRadius = '7px';
+    row.style.border = '1px solid rgba(128, 204, 255, 0.22)';
+    row.style.background =
+      rowIndex % 2 === 0
+        ? 'linear-gradient(180deg, rgba(19, 53, 82, 0.42) 0%, rgba(13, 39, 63, 0.35) 100%)'
+        : 'linear-gradient(180deg, rgba(11, 40, 64, 0.5) 0%, rgba(9, 30, 49, 0.4) 100%)';
+    row.style.boxShadow = '0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 2px 8px rgba(0, 10, 24, 0.22)';
+    row.style.textShadow = '0 1px 0 rgba(0, 0, 0, 0.22)';
+    row.style.color = '#f4fbff';
     row.style.opacity = '0';
-    row.style.transform = 'translateY(8px)';
-    row.style.transition = 'opacity 220ms ease, transform 220ms ease';
+    row.style.transform = 'translateY(6px)';
+    row.style.transition = 'opacity 220ms ease, transform 220ms ease, filter 220ms ease';
+    row.style.filter = 'saturate(0.92)';
 
     const nearBottom = debugHudLog.scrollTop + debugHudLog.clientHeight >= debugHudLog.scrollHeight - 14;
     debugHudLog.appendChild(row);
@@ -1257,6 +1342,7 @@ game.start(loader).then(() => {
     requestAnimationFrame(() => {
       row.style.opacity = '1';
       row.style.transform = 'translateY(0)';
+      row.style.filter = 'saturate(1)';
     });
 
     if (nearBottom || debugHudLog.childElementCount <= 8) {
@@ -1289,7 +1375,7 @@ game.start(loader).then(() => {
     const snapshot = agentManager.getDebugSnapshot();
     refreshActionStatsUi(snapshot);
     refreshDepartmentSummaryUi(snapshot);
-    updateSalesDeskVisibility(snapshot);
+    updateDepartmentDeskVisibility(snapshot);
     const lines = snapshot.map((entry) => {
       const department = entry.zoneId ? getDepartmentById(entry.zoneId) : null;
       const normalizedActionType = entry.actionType.startsWith('AUTO_') ? 'NO_LOG' : entry.actionType;
@@ -1372,17 +1458,6 @@ game.start(loader).then(() => {
 
     const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
     if (!selectedAgent) {
-      clearSelectedDetailPanel();
-      return;
-    }
-
-    const selectedBounds = getAgentPageBounds(selectedAgent);
-    const selectedIsOffscreen =
-      selectedBounds.right < 0 ||
-      selectedBounds.left > window.innerWidth ||
-      selectedBounds.bottom < 0 ||
-      selectedBounds.top > window.innerHeight;
-    if (selectedIsOffscreen) {
       clearSelectedDetailPanel();
       return;
     }

@@ -75,10 +75,10 @@ export class Agent extends ex.Actor {
       }
     });
 
-    this.addAnimation('left-idle', spriteSheet, 1);
-    this.addAnimation('right-idle', spriteSheet, 2);
-    this.addAnimation('up-idle', spriteSheet, 3);
-    this.addAnimation('down-idle', spriteSheet, 0);
+    this.addAnimation('left-idle', spriteSheet, 1, 1);
+    this.addAnimation('right-idle', spriteSheet, 2, 1);
+    this.addAnimation('up-idle', spriteSheet, 3, 1);
+    this.addAnimation('down-idle', spriteSheet, 0, 1);
 
     this.addAnimation('left-walk', spriteSheet, 5);
     this.addAnimation('right-walk', spriteSheet, 6);
@@ -151,7 +151,7 @@ export class Agent extends ex.Actor {
     const durationMs = log.durationMs ?? mapEntry.defaultDurationMs;
     this.currentMappedBehavior = mapEntry.behavior;
 
-    if (log.action_type === 'CREATE_SO' && this.seatSpots.length > 0) {
+    if ((log.action_type === 'CREATE_SO' || log.action_type === 'STOCK_TRANSFER') && this.seatSpots.length > 0) {
       this.startCommandMoveToSeat(durationMs);
       return;
     }
@@ -238,15 +238,18 @@ export class Agent extends ex.Actor {
     };
   }
 
-  private addAnimation(key: AnimationState, spriteSheet: ex.SpriteSheet, row: number): void {
-    const animation = new ex.Animation({
-      frames: [
-        { graphic: spriteSheet.getSprite(0, row) as ex.Sprite, duration: Config.AgentFrameSpeed },
-        { graphic: spriteSheet.getSprite(1, row) as ex.Sprite, duration: Config.AgentFrameSpeed },
-        { graphic: spriteSheet.getSprite(2, row) as ex.Sprite, duration: Config.AgentFrameSpeed },
-        { graphic: spriteSheet.getSprite(3, row) as ex.Sprite, duration: Config.AgentFrameSpeed }
-      ]
-    });
+  private addAnimation(
+    key: AnimationState,
+    spriteSheet: ex.SpriteSheet,
+    row: number,
+    frameCount = 4
+  ): void {
+    const frames = Array.from({ length: frameCount }, (_, index) => ({
+      graphic: spriteSheet.getSprite(index, row) as ex.Sprite,
+      duration: Config.AgentFrameSpeed
+    }));
+
+    const animation = new ex.Animation({ frames });
 
     this.graphics.add(key, animation);
   }
