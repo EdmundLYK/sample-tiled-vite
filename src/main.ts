@@ -577,6 +577,11 @@ game.start(loader).then(() => {
     y: anchor.y + 12,
     facing: 'up' as const
   }));
+  const operationsSeatSpotsByLorry = operationsLorryActors.map((lorry) => ({
+    x: lorry.pos.x + 4,
+    y: lorry.pos.y + 4,
+    facing: 'up' as const
+  }));
   let currentVisibleSalesDeskCount = -1;
   let currentVisiblePurchaseDeskCount = -1;
   let currentVisibleOperationsLorryCount = -1;
@@ -787,13 +792,25 @@ game.start(loader).then(() => {
   ) => {
     const operationsAgentCount = snapshot.filter((entry) => entry.zoneId === 'operations').length;
     const visibleLorryCount = Math.max(0, Math.min(operationsAgentCount, operationsLorryActors.length));
-    if (visibleLorryCount === currentVisibleOperationsLorryCount) {
-      return;
+    if (visibleLorryCount !== currentVisibleOperationsLorryCount) {
+      currentVisibleOperationsLorryCount = visibleLorryCount;
+      for (let i = 0; i < operationsLorryActors.length; i += 1) {
+        setActorVisibility(operationsLorryActors[i], i < visibleLorryCount);
+      }
     }
 
-    currentVisibleOperationsLorryCount = visibleLorryCount;
-    for (let i = 0; i < operationsLorryActors.length; i += 1) {
-      setActorVisibility(operationsLorryActors[i], i < visibleLorryCount);
+    const operationsRuntimeZone = {
+      id: operationsDepartment.id,
+      bounds: operationsDepartment.bounds,
+      // Keep lorry area reachable for CREATE_PO boarding behavior.
+      noWalkAreas: [],
+      obstacleAreas: [],
+      seatSpots: operationsSeatSpotsByLorry.slice(0, visibleLorryCount)
+    };
+    for (const entry of snapshot) {
+      if (entry.zoneId === 'operations') {
+        agentManager.assignAgentToZone(entry.id, operationsRuntimeZone);
+      }
     }
   };
 
@@ -805,6 +822,19 @@ game.start(loader).then(() => {
     updateOperationsLorryVisibility(snapshot);
   };
   updateDepartmentDeskVisibility();
+
+  const getOperationsLorryBySeatKey = (seatKey: string | null): ex.Actor | null => {
+    if (!seatKey || !seatKey.startsWith('operations:')) {
+      return null;
+    }
+    const parts = seatKey.split(':');
+    const indexText = parts[1];
+    const index = Number(indexText);
+    if (!Number.isFinite(index) || index < 0 || index >= operationsLorryActors.length) {
+      return null;
+    }
+    return operationsLorryActors[index] ?? null;
+  };
 
   const COMMAND_COOLDOWN_MS = 7000;
   const nextCommandAtByAgent = new Map<string, number>();
@@ -1517,7 +1547,14 @@ game.start(loader).then(() => {
         continue;
       }
 
-      const anchorWorldPos = ex.vec(agent.pos.x, agent.pos.y - agent.height + 3);
+      let anchorWorldPos = ex.vec(agent.pos.x, agent.pos.y - agent.height + 3);
+      if (agent.getDepartmentZoneId() === 'operations' && agent.isInsideLorry()) {
+        const assignedLorry = getOperationsLorryBySeatKey(agent.getReservedSeatKey());
+        if (assignedLorry) {
+          const visualHalfHeight = Math.max(8, (assignedLorry.height * Math.abs(assignedLorry.scale.y)) / 2);
+          anchorWorldPos = ex.vec(assignedLorry.pos.x, assignedLorry.pos.y - visualHalfHeight - 3);
+        }
+      }
       const pagePos = game.screen.worldToPageCoordinates(anchorWorldPos);
       nameTag.style.left = `${pagePos.x}px`;
       nameTag.style.top = `${pagePos.y}px`;

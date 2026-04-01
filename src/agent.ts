@@ -50,6 +50,7 @@ export class Agent extends ex.Actor {
   private commandPostMoveTimerMs = 0;
   private commandWalkRetryCount = 0;
   private reservedSeatKey: string | null = null;
+  private insideLorry = false;
   private readonly model: AgentModel;
 
   private static readonly seatReservations = new Map<string, string>();
@@ -111,7 +112,9 @@ export class Agent extends ex.Actor {
       if (this.commandTimerMs <= 0) {
         this.commandTimerMs = 0;
         this.commandTarget = null;
+        this.commandWaypoints = [];
         this.commandPostMoveTimerMs = 0;
+        this.setInsideLorry(false);
         this.pickNextBehavior();
       }
 
@@ -155,12 +158,18 @@ export class Agent extends ex.Actor {
   }
 
   applyLog(log: AgentLog): void {
+    this.setInsideLorry(false);
     this.currentLog = log;
     const mapEntry = getActionMapEntry(log.action_type);
     const durationMs = log.durationMs ?? mapEntry.defaultDurationMs;
     this.currentMappedBehavior = mapEntry.behavior;
 
-    if ((log.action_type === 'CREATE_SO' || log.action_type === 'STOCK_TRANSFER') && this.seatSpots.length > 0) {
+    if (
+      (log.action_type === 'CREATE_SO' ||
+        log.action_type === 'STOCK_TRANSFER' ||
+        log.action_type === 'CREATE_PO') &&
+      this.seatSpots.length > 0
+    ) {
       this.startCommandMoveToSeat(durationMs);
       return;
     }
@@ -248,6 +257,14 @@ export class Agent extends ex.Actor {
     };
   }
 
+  isInsideLorry(): boolean {
+    return this.insideLorry;
+  }
+
+  getReservedSeatKey(): string | null {
+    return this.reservedSeatKey;
+  }
+
   private addAnimation(
     key: AnimationState,
     spriteSheet: ex.SpriteSheet,
@@ -299,6 +316,7 @@ export class Agent extends ex.Actor {
     this.commandTargetFacing = seatSelection.seat.facing;
     this.commandPostMoveTimerMs = durationMs;
     this.commandWalkRetryCount = 0;
+    this.setInsideLorry(false);
     this.commandWaypoints = seatSelection.path;
     this.commandTimerMs = walkMs;
     this.commandVelocity = ex.vec(0, 0);
@@ -333,6 +351,9 @@ export class Agent extends ex.Actor {
       this.commandWalkRetryCount = 0;
       this.commandVelocity = ex.vec(0, 0);
       this.commandAnimation = `${this.facing}-idle`;
+      if (this.currentLog?.action_type === 'CREATE_PO') {
+        this.setInsideLorry(true);
+      }
       this.commandTimerMs = this.commandPostMoveTimerMs;
       this.commandPostMoveTimerMs = 0;
       return;
@@ -762,6 +783,11 @@ export class Agent extends ex.Actor {
       minY: bounds.y1 + halfHeight + DEPARTMENT_WALL_CLEARANCE_PX,
       maxY: bounds.y2 - halfHeight - DEPARTMENT_WALL_CLEARANCE_PX
     };
+  }
+
+  private setInsideLorry(next: boolean): void {
+    this.insideLorry = next;
+    this.graphics.visible = !next;
   }
 }
 
